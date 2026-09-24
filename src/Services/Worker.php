@@ -68,33 +68,34 @@ final class Worker
                     continue;
                 }
 
-                $maxHour = Settings::int('send_max_per_hour', 200);
-                $lastHour = (int) Db::value("SELECT COUNT(*) FROM messages WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
-                if ($maxHour > 0 && $lastHour >= $maxHour) {
-                    $this->beat('limite por hora atingido');
-                    if ($once) {
-                        return;
-                    }
-                    $this->sleep(30);
-                    continue;
-                }
+                // Pausa anti-bloqueio entre clientes (10–15 min, aleatória). O horário do próximo
+                // envio fica no banco: sobrevive a reinícios do worker. Testes não esperam.
+                $nextAt = (int) strtotime((string) Settings::get('worker_next_send_at', '1970-01-01'));
+                $cooling = $nextAt > time();
 
-                $msg = $this->claim();
+                $msg = $this->claim($cooling);
                 if (!$msg) {
                     if ($once) {
                         return;
                     }
-                    $this->sleep(3);
+                    if ($cooling) {
+                        $this->beat('pausa anti-bloqueio: próximo envio às ' . date('H:i', $nextAt));
+                        $this->sleep(min(30, max(1, $nextAt - time())));
+                    } else {
+                        $this->sleep(3);
+                    }
                     continue;
                 }
                 $jobs++;
                 $attempted = $this->process($msg);
-                if ($once) {
-                    continue;
-                }
-                if ($attempted) {
-                    $interval = max(1, Settings::int('send_interval_seconds', 10));
-                    $this->sleep($interval + random_int(0, (int) ceil($interval * 0.4)));
+                if ($attempted && (int) $msg['is_test'] !== 1) {
+                    $min = max(0, Settings::int('send_interval_min_minutes', 10));
+                    $max = max($min, Settings::int('send_interval_max_minutes', 15));
+                    if ($max > 0) {
+                        $delay = random_int($min * 60, $max * 60);
+                        Settings::set('worker_next_send_at', date('Y-m-d H:i:s', time() + $delay));
+                        Logger::info('worker', 'Próximo envio a cliente às ' . date('H:i', time() + $delay) . ' (intervalo anti-bloqueio de ' . round($delay / 60, 1) . ' min)');
+                    }
                 }
             } catch (\PDOException $e) {
                 Logger::error('worker', 'Erro de banco no worker: ' . $e->getMessage());
@@ -137,26 +138,38 @@ final class Worker
         return $this->online;
     }
 
+    private string $lastInfo = 'ativo';
+
     private function beat(string $info): void
     {
+        $this->lastInfo = $info;
         if (time() - $this->lastBeat >= 15) {
             Heartbeat::beat('worker', $info);
             $this->lastBeat = time();
         }
     }
 
+    /** Dorme sem deixar de dar sinal de vida (pausas longas não podem parecer worker travado). */
     private function sleep(int $seconds): void
     {
         for ($i = 0; $i < $seconds && !$this->stop; $i++) {
             sleep(1);
+            if ($i % 15 === 14) {
+                $this->beat($this->lastInfo);
+            }
         }
     }
 
     /** Reserva atomicamente uma mensagem (seguro com vários workers). */
-    public function claim(): ?array
+    public function claim(bool $onlyTests = false): ?array
     {
+        // Prioridade: testes > pagamento/situação do contrato > vence hoje > atraso > lembrete antecipado
         $n = Db::run("UPDATE messages SET status = 'processing', locked_by = ?, locked_at = NOW(), attempts = attempts + 1
-            WHERE status = 'pending' AND available_at <= NOW() ORDER BY available_at, id LIMIT 1", [$this->id])->rowCount();
+            WHERE status = 'pending' AND available_at <= NOW()" . ($onlyTests ? ' AND is_test = 1' : '') . "
+            ORDER BY is_test DESC,
+                FIELD(event, 'payment_confirmed', 'reactivated', 'suspended', 'cancelled', 'due_today', 'after_due', 'before_due'),
+                available_at, id
+            LIMIT 1", [$this->id])->rowCount();
         if ($n === 0) {
             return null;
         }
@@ -187,6 +200,9 @@ final class Worker
         $homolog = Settings::isHomologation();
         $testNumber = Phone::normalize((string) Settings::get('test_number', ''));
         $body = (string) $m['body'];
+        if (!$isTest && in_array($m['event'], Planner::DUE_EVENTS, true)) {
+            $body = $this->freshBody($m) ?? $body;
+        }
         if ($isTest) {
             if (!$testNumber) {
                 $this->finish($id, 'failed', ['last_error' => 'Número de teste não configurado']);
@@ -232,7 +248,7 @@ final class Worker
             if ($isCharge && $m['invoice_id']) {
                 $invoice = Db::one('SELECT * FROM invoices WHERE id = ?', [$m['invoice_id']]);
                 if ($invoice && $invoice['status'] === 'open') {
-                    usleep(1500000);
+                    usleep(random_int(3000000, 8000000));
                     $att = InvoiceAttachments::send($this->client, $to, $invoice);
                     Db::update('messages', ['attachments' => $att ? implode(',', $att) : 'nenhum'], 'id = ?', [$id]);
                 }
@@ -274,9 +290,18 @@ final class Worker
             if ($m['contract_id'] && Db::value('SELECT status FROM contracts WHERE id = ?', [$m['contract_id']]) === 'cancelled') {
                 return 'Contrato cancelado';
             }
-            // Mensagens de vencimento só valem no dia planejado (+1 dia de tolerância)
-            if (strtotime((string) $m['created_at']) < strtotime('-2 days')) {
-                return 'Mensagem de vencimento expirada (criada há mais de 2 dias)';
+            // Validade: com o intervalo anti-bloqueio a fila pode atrasar em dias de pico;
+            // o texto nunca pode ficar errado ("vence em 3 dias" depois de vencida, etc.).
+            $due = $m['invoice_id'] ? (string) Db::value('SELECT due_date FROM invoices WHERE id = ?', [$m['invoice_id']]) : '';
+            $today = date('Y-m-d');
+            if ($m['event'] === 'before_due' && $due !== '' && $today >= $due) {
+                return 'Lembrete expirado: a fatura já chegou ao vencimento';
+            }
+            if ($m['event'] === 'due_today' && $due !== '' && $today > $due) {
+                return 'Aviso "vence hoje" expirado: a data já passou';
+            }
+            if ($m['event'] === 'after_due' && strtotime((string) $m['created_at']) < strtotime('-3 days')) {
+                return 'Cobrança de atraso expirada (fila atrasada mais de 3 dias)';
             }
         }
         if (in_array($m['event'], ['suspended', 'cancelled', 'reactivated'], true) && $m['contract_id']) {
@@ -287,6 +312,26 @@ final class Worker
             }
         }
         return null;
+    }
+
+    /** Remonta o texto da cobrança no momento do envio (dias para vencer/atraso sempre corretos). */
+    private function freshBody(array $m): ?string
+    {
+        if (!$m['rule_id'] || !$m['invoice_id']) {
+            return null;
+        }
+        $tpl = Db::value('SELECT t.body FROM rules r JOIN templates t ON t.id = r.template_id WHERE r.id = ?', [$m['rule_id']]);
+        $invoice = Db::one('SELECT * FROM invoices WHERE id = ?', [$m['invoice_id']]);
+        $customer = $m['customer_id'] ? Db::one('SELECT * FROM customers WHERE id = ?', [$m['customer_id']]) : null;
+        if (!$tpl || !$invoice || !$customer) {
+            return null;
+        }
+        $contract = $invoice['contract_id'] ? Db::one('SELECT * FROM contracts WHERE id = ?', [$invoice['contract_id']]) : null;
+        $body = TemplateRenderer::render((string) $tpl, TemplateRenderer::varsFor($customer, $invoice, $contract));
+        if ($body !== $m['body']) {
+            Db::update('messages', ['body' => $body], 'id = ?', [$m['id']]);
+        }
+        return $body;
     }
 
     private function hasWhatsapp(int $customerId, string $number): bool

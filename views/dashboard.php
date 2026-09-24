@@ -18,6 +18,15 @@ $hb = static function (?array $h, int $max): string {
   <a class="stat bad" href="/mensagens?status=failed"><b><?= $stats['failed_24h'] ?? 0 ?></b><span>Falhas (24h)</span></a>
 </div>
 
+<?php $cap = $capacity; $over = $cap['queue_today'] > $cap['remaining']; ?>
+<div class="card <?= $over ? 'card-warn' : '' ?>">
+  <h2>🛡 Envios espaçados (anti-bloqueio)</h2>
+  <p>Intervalo aleatório de <b><?= (int) $cap['min'] ?> a <?= (int) $cap['max'] ?> min</b> entre clientes — cabem cerca de <b><?= (int) $cap['per_day'] ?> clientes por dia</b> na janela de envio.
+    <?php if (!empty($cap['next_at']) && strtotime((string) $cap['next_at']) > time()): ?> Próximo envio a cliente às <b><?= e(date('H:i', strtotime((string) $cap['next_at']))) ?></b>.<?php endif; ?></p>
+  <p>Na fila para hoje: <b><?= (int) $cap['queue_today'] ?></b> · ainda cabem hoje: <b><?= (int) $cap['remaining'] ?></b> · agendadas para amanhã: <b><?= (int) $cap['queue_tomorrow'] ?></b></p>
+  <?php if ($over): ?><p class="small">⚠ Hoje há mais clientes na fila do que cabem no dia. O excedente sai amanhã, na ordem de prioridade (pagamentos e "vence hoje" primeiro). Lembretes que perderem a validade não são enviados, para não levar data errada ao cliente.</p><?php endif; ?>
+</div>
+
 <div class="grid-2">
   <div class="card">
     <h2>Serviços</h2>

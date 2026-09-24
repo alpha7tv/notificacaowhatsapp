@@ -9,6 +9,7 @@ use App\Core\Db;
 use App\Core\Logger;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Settings;
 use App\Core\View;
 use App\Integrations\SgpClient;
 use App\Services\HealthService;
@@ -30,8 +31,24 @@ final class PanelController
             (SELECT COUNT(*) FROM messages WHERE status = 'pending') AS pending,
             (SELECT COUNT(*) FROM messages WHERE sent_at >= CURDATE()) AS sent_today,
             (SELECT COUNT(*) FROM messages WHERE status = 'failed' AND updated_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)) AS failed_24h") ?? [];
+        // Previsão da fila x capacidade do dia (intervalo anti-bloqueio entre clientes)
+        $win = Db::one('SELECT MIN(send_start) s, MAX(send_end) e FROM rules WHERE active = 1') ?? [];
+        $start = strtotime(date('Y-m-d ') . ($win['s'] ?? '08:00:00'));
+        $end = strtotime(date('Y-m-d ') . ($win['e'] ?? '20:00:00'));
+        $avg = (Settings::int('send_interval_min_minutes', 10) + Settings::int('send_interval_max_minutes', 15)) / 2;
+        $remainingMin = max(0, ($end - max(time(), $start)) / 60);
+        $capacity = [
+            'queue_today' => (int) Db::value("SELECT COUNT(*) FROM messages WHERE status = 'pending' AND is_test = 0 AND available_at <= ?", [date('Y-m-d 23:59:59')]),
+            'queue_tomorrow' => (int) Db::value("SELECT COUNT(*) FROM messages WHERE status = 'pending' AND is_test = 0 AND available_at BETWEEN ? AND ?", [date('Y-m-d 00:00:00', strtotime('+1 day')), date('Y-m-d 23:59:59', strtotime('+1 day'))]),
+            'remaining' => $avg > 0 ? (int) floor($remainingMin / $avg) : 999,
+            'per_day' => $avg > 0 ? (int) floor(($end - $start) / 60 / $avg) : 999,
+            'min' => Settings::int('send_interval_min_minutes', 10),
+            'max' => Settings::int('send_interval_max_minutes', 15),
+            'next_at' => Settings::get('worker_next_send_at'),
+        ];
         View::page('dashboard', [
             'title' => 'Painel',
+            'capacity' => $capacity,
             'stats' => array_map('intval', $stats),
             'integrations' => HealthService::integrations(false),
             'worker' => Heartbeat::get('worker'),

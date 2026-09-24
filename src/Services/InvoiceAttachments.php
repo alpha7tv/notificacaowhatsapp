@@ -35,7 +35,7 @@ final class InvoiceAttachments
                 if ($r['ok']) {
                     $sent[] = 'pdf';
                 }
-                usleep(1500000);
+                usleep(random_int(3000000, 8000000)); // pausa variável entre as partes, como uma pessoa enviando
             }
         }
 
@@ -48,7 +48,7 @@ final class InvoiceAttachments
                 if ($r['ok']) {
                     $sent[] = 'qr';
                 }
-                usleep(1500000);
+                usleep(random_int(3000000, 8000000)); // pausa variável entre as partes, como uma pessoa enviando
             }
         }
 

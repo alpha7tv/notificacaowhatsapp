@@ -143,8 +143,8 @@ final class SystemController
         $values = [
             'company_name' => mb_substr(Request::str('company_name'), 0, 100) ?: 'Fiber Link',
             'support_phone' => mb_substr(Request::str('support_phone'), 0, 60),
-            'send_interval_seconds' => (string) max(3, min(300, Request::int('send_interval_seconds', 10))),
-            'send_max_per_hour' => (string) max(1, min(2000, Request::int('send_max_per_hour', 200))),
+            'send_interval_min_minutes' => (string) ($minI = max(1, min(120, Request::int('send_interval_min_minutes', 10)))),
+            'send_interval_max_minutes' => (string) max($minI, min(180, Request::int('send_interval_max_minutes', 15))),
             'send_days' => implode(',', $days ?: ['1', '2', '3', '4', '5', '6']),
             'catchup_days' => (string) max(0, min(5, Request::int('catchup_days', 1))),
             'log_retention_days' => (string) max(7, min(3650, Request::int('log_retention_days', 90))),

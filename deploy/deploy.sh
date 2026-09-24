@@ -115,13 +115,12 @@ if ! confirm "Implantar a nova versão agora?" "S"; then info "Cancelado."; exit
 
 # 4-5) -------------------------------------------------------------------------
 step "4/13 Montando release e instalando dependências"
-# Pacotes do sistema exigidos por versões novas (instala só o que faltar)
-NEEDED_PKGS=(qrencode)
-for pkg in "${NEEDED_PKGS[@]}"; do
-  dpkg -s "$pkg" >/dev/null 2>&1 || apt-get -y -q -o DPkg::Lock::Timeout=600 install "$pkg" >/dev/null
-done
 NEW_RELEASE=$(build_release "$MODE" "$SRC" | tail -n1)
 [[ -d "$NEW_RELEASE" && -f "${NEW_RELEASE}/bin/console" ]] || die "Release inválida."
+# Pacotes do sistema exigidos pela versão NOVA (lista vem dentro da própria release)
+if [[ -f "${NEW_RELEASE}/deploy/requirements.sh" ]]; then
+  bash "${NEW_RELEASE}/deploy/requirements.sh"
+fi
 ok "Nova release: $(basename "$NEW_RELEASE")"
 step "5/13 Compilando frontend"
 ok "Não aplicável: painel renderizado no servidor (sem Node/npm)."

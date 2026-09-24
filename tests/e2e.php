@@ -31,6 +31,7 @@ foreach (['messages', 'invoices', 'contracts', 'customers', 'webhook_events', 'r
 Settings::set('mode', 'homologation');
 Settings::set('sgp_last_ok_at', '');
 Settings::set('send_days', '1,2,3,4,5,6,7');
+Settings::set('send_interval_min_minutes', '0'); Settings::set('send_interval_max_minutes', '0'); Settings::set('worker_next_send_at', '');
 Db::run("UPDATE rules SET send_start='00:00:00', send_end='23:59:59'");
 
 // 1) SGP com token errado
@@ -85,6 +86,29 @@ $check('Cobrança: código PIX enviado SOZINHO em mensagem separada', $pixCode !
 $check('Cobrança: texto principal não traz o código PIX', !array_filter($sent, fn ($m) => str_contains($m['text'], 'HOMOLOGAÇÃO') && str_contains($m['text'], $pixCode)));
 $check('Cobrança: anexos registrados na mensagem', (string) Db::value("SELECT attachments FROM messages m JOIN invoices i ON i.id=m.invoice_id WHERE i.sgp_id='9001' AND m.status='sent' LIMIT 1") !== '');
 $check('Homologação: mensagem identifica destino real mascarado', str_contains($sent[0]['text'], 'HOMOLOGAÇÃO') && !str_contains($sent[0]['text'], '5511987654321'));
+
+// 5b) Anti-bloqueio: intervalo de 10–15 min entre clientes; testes não esperam
+Settings::set('send_interval_min_minutes', '10'); Settings::set('send_interval_max_minutes', '15'); Settings::set('worker_next_send_at', '');
+$before = $sentCount();
+foreach (['ab:1', 'ab:2'] as $k) {
+    Db::run("INSERT INTO messages (idempotency_key, event, customer_id, destination, body, status, available_at) VALUES (?, 'payment_confirmed', ?, '5511987654321', 'teste anti-bloqueio', 'pending', NOW())", [$k, $c['id']]);
+}
+Db::run("INSERT INTO messages (idempotency_key, event, destination, body, status, is_test, available_at) VALUES ('ab:t', 'test', '5511955556666', 'teste', 'pending', 1, NOW())");
+(new Worker())->run(60, 10, true);
+$next = strtotime((string) Settings::get('worker_next_send_at'));
+$check('Anti-bloqueio: só 1 cliente enviado, o próximo aguarda o intervalo', Db::value("SELECT status FROM messages WHERE idempotency_key='ab:1'") === 'sent' && Db::value("SELECT status FROM messages WHERE idempotency_key='ab:2'") === 'pending');
+$check('Anti-bloqueio: próximo envio agendado entre 10 e 15 min', $next >= time() + 590 && $next <= time() + 901, date('H:i:s', $next));
+$check('Anti-bloqueio: mensagem de teste não espera o intervalo', Db::value("SELECT status FROM messages WHERE idempotency_key='ab:t'") === 'sent');
+Db::run("DELETE FROM messages WHERE idempotency_key LIKE 'ab:%'");
+Settings::set('send_interval_min_minutes', '0'); Settings::set('send_interval_max_minutes', '0'); Settings::set('worker_next_send_at', '');
+
+// 5c) Validade: lembrete "antes do vencimento" nunca sai depois que a fatura venceu
+$old = Db::one("SELECT * FROM invoices WHERE sgp_id='9002'");
+$ruleD3 = Db::value("SELECT id FROM rules WHERE event='before_due' LIMIT 1");
+Db::run("INSERT INTO messages (idempotency_key, rule_id, event, customer_id, invoice_id, destination, body, status, available_at) VALUES ('val:1', ?, 'before_due', ?, ?, '5511987654321', 'x', 'pending', NOW())", [$ruleD3, $c['id'], $old['id']]);
+(new Worker())->run(60, 1, true);
+$check('Validade: lembrete antecipado de fatura já vencida é cancelado', Db::value("SELECT status FROM messages WHERE idempotency_key='val:1'") === 'cancelled');
+Db::run("DELETE FROM messages WHERE idempotency_key = 'val:1'");
 
 // 6) Pagamento: transição aberta -> paga gera evento, e cancela lembretes pendentes
 Planner::createForInvoice(Db::one("SELECT r.*, t.body AS template_body FROM rules r JOIN templates t ON t.id=r.template_id WHERE r.code='vence_hoje'"), $inv, 'due:manual:test');

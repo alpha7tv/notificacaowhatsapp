@@ -37,8 +37,12 @@ final class Auth
 
         $last = (int) ($_SESSION['_last'] ?? 0);
         if ($last && time() - $last > $lifetime) {
-            self::logout();
-            session_start();
+            // Sessão expirada: limpa os dados e troca o ID (o PHP envia o cookie novo).
+            // Não usar logout()+session_start(): reabriria o MESMO ID sem reenviar o cookie,
+            // e o formulário de login seguinte falharia com "sessão expirada".
+            $_SESSION = [];
+            session_regenerate_id(true);
+            self::$user = null;
         }
         $_SESSION['_last'] = time();
     }
