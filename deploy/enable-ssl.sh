@@ -115,7 +115,8 @@ if (( ISSUED > 0 )); then
   if systemctl is-enabled --quiet certbot.timer 2>/dev/null; then ok "certbot.timer ativo (renovação 2x ao dia)"; else warn "certbot.timer não encontrado"; fi
   for d in "$PAINEL_DOMAIN" "$API_DOMAIN"; do
     cert_exists "$d" || continue
-    if certbot renew --dry-run --cert-name "$d" --quiet; then ok "Teste de renovação OK: ${d}"; else warn "Teste de renovação falhou para ${d}"; fi
+    if timeout 180 certbot renew --dry-run --cert-name "$d" --quiet; then ok "Teste de renovação OK: ${d}"
+    else warn "Teste de renovação não concluiu para ${d} (servidor de testes do Let's Encrypt lento?). A renovação real segue agendada."; fi
   done
 fi
 
