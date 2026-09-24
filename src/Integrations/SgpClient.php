@@ -87,6 +87,12 @@ final class SgpClient
         return $this->post($this->titlesPath, $p);
     }
 
+    /** Listagem geral de títulos (paginada; filtros ex.: data_vencimento_inicio/fim em AAAA-MM-DD). */
+    public function titulosPage(array $filters, int $offset, int $limit = 250): array
+    {
+        return $this->post($this->titlesPath, $filters + ['offset' => $offset, 'limit' => $limit]);
+    }
+
     /** Testa as credenciais com uma consulta inofensiva (somente leitura). */
     public function test(?string $document = null): array
     {

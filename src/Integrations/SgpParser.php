@@ -12,6 +12,7 @@ use App\Services\Phone;
 final class SgpParser
 {
     private const CONTRACT_ID = ['contratoId', 'contrato_id', 'idContrato', 'contrato'];
+    private const TITLE_CONTRACT = ['clienteContrato', 'contratoId', 'contrato_id', 'idContrato', 'contrato'];
     private const DUE_KEYS = ['dataVencimento', 'vencimento', 'data_vencimento', 'vencimentoOriginal', 'dataVencimentoOriginal', 'dt_vencimento'];
     private const AMOUNT_KEYS = ['valor', 'valorCorrigido', 'valor_corrigido', 'valorOriginal', 'valor_original', 'valorDocumento', 'valor_titulo'];
     private const TITLE_ID = ['id', 'titulo', 'tituloId', 'idTitulo', 'titulo_id', 'numeroDocumento', 'numero_documento', 'nossoNumero', 'nosso_numero', 'documento'];
@@ -65,7 +66,7 @@ final class SgpParser
             $paidAmount = self::first($t, ['valorPago', 'valor_pago']);
             $out[(string) $id] = [
                 'sgp_id' => (string) $id,
-                'contract' => ($c = self::first($t, self::CONTRACT_ID)) !== null && !is_array($c) ? (string) $c : null,
+                'contract' => ($c = self::first($t, self::TITLE_CONTRACT)) !== null && !is_array($c) ? (string) $c : null,
                 'amount' => self::money(self::first($t, self::AMOUNT_KEYS)),
                 'due_date' => $due,
                 'status' => $status,

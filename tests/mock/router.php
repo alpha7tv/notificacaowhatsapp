@@ -1,5 +1,6 @@
 <?php
 // Mock de SGP (API URA) + Evolution API para testes locais.
+date_default_timezone_set('America/Sao_Paulo');
 $state = __DIR__ . '/state.json';
 $s = is_file($state) ? json_decode(file_get_contents($state), true) : [];
 $s += ['invoice_status' => 'Aberto', 'contract_status' => 'Ativo', 'sent' => [], 'wa_state' => 'open', 'fail_next' => 0];
@@ -24,10 +25,13 @@ switch (true) {
         ]]]);
         break;
     case $path === '/api/ura/titulos/':
-        echo json_encode(['titulos' => [
-            ['id' => 9001, 'contrato' => 5501, 'valor' => '99,90', 'dataVencimento' => $due1, 'status' => $s['invoice_status'],
+        // Formato real do SGP: paginação + dados do cliente em cada título
+        $cpf = $_POST['cpfcnpj'] ?? '';
+        if ($cpf !== '' && $cpf !== '12345678909') { echo json_encode(['paginacao' => ['offset' => 0, 'limit' => 250, 'parcial' => 0, 'total' => 0], 'titulos' => []]); break; }
+        echo json_encode(['paginacao' => ['offset' => 0, 'limit' => 250, 'parcial' => 0, 'total' => 2], 'titulos' => [
+            ['id' => 9001, 'clienteNome' => 'JOAO DA SILVA', 'clienteCpfcnpj' => '123.456.789-09', 'clienteContrato' => 5501, 'valor' => '99,90', 'dataVencimento' => $due1, 'status' => $s['invoice_status'],
              'linhaDigitavel' => '00190.00009 01234.567891 23456.789012 1 00000000009990', 'codigoPix' => '00020126580014BR.GOV.BCB.PIX0136abcdef1234567890abcdef12345678905204000053039865405099.905802BR5909FIBERLINK6009SAOPAULO62070503***6304ABCD'],
-            ['id' => 9002, 'contrato' => 5501, 'valor' => 120.5, 'vencimento' => $due2, 'status' => 'Vencido'],
+            ['id' => 9002, 'clienteNome' => 'JOAO DA SILVA', 'clienteCpfcnpj' => '123.456.789-09', 'clienteContrato' => 5501, 'valor' => 120.5, 'vencimento' => $due2, 'status' => 'Vencido'],
         ]]);
         break;
     case str_starts_with($path, '/instance/connectionState/'):

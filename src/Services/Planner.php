@@ -125,6 +125,11 @@ final class Planner
         $status = 'pending';
         $reason = null;
         $phone = (string) ($customer['phone'] ?? '');
+        if ($phone === '' && empty($customer['last_synced_at'])) {
+            // Cliente descoberto pela listagem de faturas e ainda sem telefone consultado no SGP:
+            // não cria agora (a chave de idempotência travaria como "ignorada"); a próxima rodada cria.
+            return false;
+        }
         if ((int) $customer['opt_out'] === 1) {
             [$status, $reason] = ['skipped', 'Cliente optou por não receber mensagens'];
         } elseif ($phone === '') {

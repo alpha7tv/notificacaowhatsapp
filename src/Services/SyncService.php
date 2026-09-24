@@ -21,6 +21,12 @@ final class SyncService
         $this->client ??= SgpClient::fromSettings();
     }
 
+    /**
+     * Modo "bulk" (padrão): lista no SGP as faturas com vencimento na janela relevante
+     * (paginado, filtrado por data) e descobre os clientes automaticamente; depois consulta
+     * telefone/situação do contrato de parte dos clientes a cada execução (escalonado).
+     * Se a listagem em massa falhar, cai para o modo "por cliente".
+     */
     public function run(?int $limit = null): array
     {
         if (!$this->client->configured()) {
@@ -28,12 +34,22 @@ final class SyncService
         }
         $limit ??= max(1, Settings::int('sgp_sync_batch', 200));
         $runId = Db::insert('sync_runs', ['started_at' => now_str(), 'status' => 'running']);
-        $customers = Db::all("SELECT * FROM customers WHERE document <> ''
-            ORDER BY (last_synced_at IS NULL) DESC, last_synced_at ASC LIMIT " . (int) $limit);
-        $tot = ['customers' => 0, 'invoices' => 0, 'events' => 0, 'errors' => 0];
+        $tot = ['customers' => 0, 'invoices' => 0, 'events' => 0, 'errors' => 0, 'discovered' => 0];
+
+        $bulk = Settings::get('sgp_sync_mode', 'bulk') === 'bulk' ? $this->bulkTitles($tot) : false;
+        if ($bulk) {
+            // Enriquecimento: telefone e situação do contrato (clientes nunca consultados primeiro)
+            $refreshHours = max(1, Settings::int('sgp_customer_refresh_hours', 3));
+            $customers = Db::all("SELECT * FROM customers WHERE document <> ''
+                AND (last_synced_at IS NULL OR last_synced_at < DATE_SUB(NOW(), INTERVAL ? HOUR))
+                ORDER BY (last_synced_at IS NULL) DESC, last_synced_at ASC LIMIT " . (int) $limit, [$refreshHours]);
+        } else {
+            $customers = Db::all("SELECT * FROM customers WHERE document <> ''
+                ORDER BY (last_synced_at IS NULL) DESC, last_synced_at ASC LIMIT " . (int) $limit);
+        }
         foreach ($customers as $c) {
             try {
-                $r = $this->syncCustomer($c);
+                $r = $this->syncCustomer($c, !$bulk);
                 $tot['invoices'] += $r['invoices'];
                 $tot['events'] += $r['events'];
                 if ($r['error']) {
@@ -47,20 +63,83 @@ final class SyncService
             usleep(150000);
         }
         $status = $tot['errors'] === 0 ? 'ok' : ($tot['errors'] < max(1, $tot['customers']) ? 'partial' : 'error');
-        $msg = sprintf('%d cliente(s), %d fatura(s), %d evento(s), %d erro(s)', $tot['customers'], $tot['invoices'], $tot['events'], $tot['errors']);
+        $msg = sprintf('%s%d cliente(s) consultado(s), %d fatura(s) atualizada(s), %d evento(s), %d erro(s)',
+            $bulk ? "modo em massa, {$tot['discovered']} cliente(s) novo(s), " : '', $tot['customers'], $tot['invoices'], $tot['events'], $tot['errors']);
         Db::update('sync_runs', [
             'finished_at' => now_str(), 'status' => $status, 'customers_checked' => $tot['customers'],
             'invoices_upserted' => $tot['invoices'], 'events_created' => $tot['events'], 'errors' => $tot['errors'], 'message' => $msg,
         ], 'id = ?', [$runId]);
         Logger::log('sgp', $status === 'ok' ? 'info' : 'warning', "Sincronização SGP concluída: $msg");
-        if ($status !== 'error' && $tot['customers'] > 0) {
+        if ($status !== 'error' && ($tot['customers'] > 0 || $bulk)) {
             Settings::set('sgp_last_ok_at', now_str());
         }
         return ['status' => $status, 'message' => $msg] + $tot;
     }
 
+    /** Importa as faturas da janela de vencimento, paginando. @return bool false se a listagem em massa falhou */
+    private function bulkTitles(array &$tot): bool
+    {
+        $from = date('Y-m-d', strtotime('-' . max(1, Settings::int('sgp_window_past_days', 45)) . ' days'));
+        $to = date('Y-m-d', strtotime('+' . max(1, Settings::int('sgp_window_future_days', 15)) . ' days'));
+        $pageSize = 250;
+        $offset = 0;
+        $customerCache = [];
+        for ($page = 0; $page < 200; $page++) {
+            $r = $this->client->titulosPage(['data_vencimento_inicio' => $from, 'data_vencimento_fim' => $to], $offset, $pageSize);
+            if (!$r['ok'] || !isset($r['json']['titulos']) || !is_array($r['json']['titulos'])) {
+                if ($page === 0) {
+                    Logger::warning('sgp', 'Listagem em massa de títulos indisponível; usando consulta por cliente. ' . ($r['error'] ?? ''));
+                    return false;
+                }
+                $tot['errors']++;
+                break;
+            }
+            $items = $r['json']['titulos'];
+            foreach ($items as $raw) {
+                if (!is_array($raw)) {
+                    continue;
+                }
+                $doc = preg_replace('/\D/', '', (string) ($raw['clienteCpfcnpj'] ?? ''));
+                $parsed = SgpParser::titles([$raw])[0] ?? null;
+                if ($parsed === null || (strlen($doc) !== 11 && strlen($doc) !== 14)) {
+                    continue;
+                }
+                try {
+                    if (!isset($customerCache[$doc])) {
+                        $existed = (bool) Db::value('SELECT id FROM customers WHERE document = ?', [$doc]);
+                        $customerCache[$doc] = self::ensureCustomer($doc, (string) ($raw['clienteNome'] ?? ''));
+                        $tot['discovered'] += $existed ? 0 : 1;
+                    }
+                    $customer = $customerCache[$doc];
+                    if ($parsed['contract'] !== null) {
+                        self::ensureContract($customer, $parsed['contract']);
+                    }
+                    [$changed, $events] = self::upsertInvoice($customer, $parsed);
+                    $tot['invoices'] += $changed ? 1 : 0;
+                    $tot['events'] += $events;
+                } catch (\Throwable $e) {
+                    $tot['errors']++;
+                    Logger::error('sgp', 'Erro importando título ' . $parsed['sgp_id'] . ': ' . $e->getMessage());
+                }
+            }
+            $total = (int) ($r['json']['paginacao']['total'] ?? 0);
+            $offset += $pageSize;
+            if (count($items) < $pageSize || $offset >= $total) {
+                break;
+            }
+            usleep(300000);
+        }
+        return true;
+    }
+
+    /** Cria o contrato (situação desconhecida) se ainda não existir, para vincular faturas. */
+    public static function ensureContract(array $customer, string $sgpId): void
+    {
+        Db::run("INSERT INTO contracts (customer_id, sgp_id, status) VALUES (?, ?, 'other') ON DUPLICATE KEY UPDATE id = id", [$customer['id'], $sgpId]);
+    }
+
     /** @return array{invoices:int,events:int,error:?string} */
-    public function syncCustomer(array $customer): array
+    public function syncCustomer(array $customer, bool $withTitles = true): array
     {
         $res = ['invoices' => 0, 'events' => 0, 'error' => null];
         $doc = (string) $customer['document'];
@@ -95,8 +174,10 @@ final class SyncService
             $res['error'] = $r['error'] ?? 'Falha na consulta do cliente';
         }
 
-        $t = $this->client->titulos($doc);
-        if ($t['ok'] && is_array($t['json'])) {
+        $t = $withTitles ? $this->client->titulos($doc) : ['ok' => false, 'json' => null, 'error' => null];
+        if (!$withTitles) {
+            // modo em massa: as faturas já vieram da listagem geral
+        } elseif ($t['ok'] && is_array($t['json'])) {
             foreach (SgpParser::titles($t['json']) as $title) {
                 [$changed, $events] = self::upsertInvoice($customer, $title);
                 $res['invoices'] += $changed ? 1 : 0;
@@ -123,7 +204,11 @@ final class SyncService
         }
         $upd = ['plan' => $c['plan'] ? mb_substr((string) $c['plan'], 0, 190) : $existing['plan'], 'status_raw' => $c['status_raw']];
         $events = 0;
-        if ($c['status'] !== $existing['status'] && $c['status'] !== 'other') {
+        if ($existing['status'] === 'other' && $c['status'] !== 'other') {
+            // Primeira vez que a situação real é conhecida (contrato criado pela listagem de faturas):
+            // registra sem disparar evento retroativo.
+            Db::update('contracts', $upd + ['status' => $c['status'], 'status_changed_at' => now_str(), 'customer_id' => $customer['id']], 'id = ?', [$existing['id']]);
+        } elseif ($c['status'] !== $existing['status'] && $c['status'] !== 'other') {
             $upd['status'] = $c['status'];
             $upd['status_changed_at'] = now_str();
             Db::update('contracts', $upd, 'id = ?', [$existing['id']]);

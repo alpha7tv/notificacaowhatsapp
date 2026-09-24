@@ -45,9 +45,11 @@ try { App\Integrations\SgpClient::fromSettings()->post('/api/ura/fatura2via/', [
 $check('SGP: endpoint fatura2via bloqueado', $blocked);
 
 // 2) Sincronização inicial (sem eventos retroativos)
-$c = SyncService::ensureCustomer('123.456.789-09');
+Settings::set('sgp_sync_mode', 'bulk');
 $r = (new SyncService())->run();
-$cust = Db::one('SELECT * FROM customers WHERE id = ?', [$c['id']]);
+$c = Db::one("SELECT * FROM customers WHERE document = '12345678909'");
+$check('Sync em massa: cliente descoberto sozinho pela listagem de faturas', $c !== null, (string) ($r['message'] ?? ''));
+$cust = $c ?? ['name' => '', 'phone' => null, 'id' => 0];
 $check('Sync: nome e celular (prefere celular) importados', $cust['name'] === 'JOAO DA SILVA' && $cust['phone'] === '5511987654321', $cust['phone'] ?? '');
 $check('Sync: contrato ativo e 2 faturas', Db::value("SELECT status FROM contracts WHERE sgp_id='5501'") === 'active' && (int) Db::value('SELECT COUNT(*) FROM invoices') === 2);
 $check('Sync: nenhum evento retroativo na importação', (int) Db::value('SELECT COUNT(*) FROM messages') === 0);
@@ -70,6 +72,10 @@ $check('Homologação sem número de teste: nada enviado', $sentCount() === 0 &&
 // 5) Homologação com número de teste -> redireciona
 Db::run("UPDATE messages SET status='pending', attempts=0");
 Settings::set('test_number', '5511955556666');
+$mock(['wa_state' => 'connecting']);
+(new Worker())->run(60, 10, true);
+$check('WhatsApp desconectado: fila aguarda sem gastar mensagens', $sentCount() === 0 && (int) Db::value("SELECT COUNT(*) FROM messages WHERE status='pending' AND attempts=0") === 2);
+$mock(['wa_state' => 'open']);
 (new Worker())->run(60, 10, true);
 $sent = json_decode(file_get_contents($state), true)['sent'];
 $allToTest = $sent && !array_filter($sent, fn ($m) => $m['number'] !== '5511955556666');
@@ -87,9 +93,11 @@ $check('Pagamento: nova sincronização não duplica o evento', (int) Db::value(
 
 // 7) Suspensão e reativação
 $mock(['contract_status' => 'Suspenso']);
+Db::run('UPDATE customers SET last_synced_at = DATE_SUB(NOW(), INTERVAL 4 HOUR)');
 (new SyncService())->run();
 $check('Suspensão: evento criado', (int) Db::value("SELECT COUNT(*) FROM messages WHERE event='suspended'") === 1);
 $mock(['contract_status' => 'Ativo']);
+Db::run('UPDATE customers SET last_synced_at = DATE_SUB(NOW(), INTERVAL 4 HOUR)');
 (new SyncService())->run();
 $check('Reativação: evento criado', (int) Db::value("SELECT COUNT(*) FROM messages WHERE event='reactivated'") === 1);
 Scheduler::reconcileStatus();

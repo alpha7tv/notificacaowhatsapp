@@ -57,6 +57,17 @@ final class Worker
                 }
                 $warnedNotConfigured = false;
 
+                // WhatsApp desconectado (QR Code não escaneado, celular sem internet...):
+                // aguarda sem reservar mensagens, para não gastá-las como "falha".
+                if (!$this->whatsappOnline()) {
+                    $this->beat('aguardando conexão do WhatsApp');
+                    if ($once) {
+                        return;
+                    }
+                    $this->sleep(30);
+                    continue;
+                }
+
                 $maxHour = Settings::int('send_max_per_hour', 200);
                 $lastHour = (int) Db::value("SELECT COUNT(*) FROM messages WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
                 if ($maxHour > 0 && $lastHour >= $maxHour) {
@@ -101,6 +112,29 @@ final class Worker
             }
         }
         Logger::info('worker', "Worker encerrando ({$jobs} mensagem(ns) processada(s)); o systemd reinicia automaticamente.");
+    }
+
+    private ?bool $online = null;
+    private int $onlineCheckedAt = 0;
+    private bool $warnedOffline = false;
+
+    /** Estado da conexão, consultado no máximo a cada 60 s. */
+    private function whatsappOnline(): bool
+    {
+        if ($this->online === null || time() - $this->onlineCheckedAt >= 60) {
+            $state = $this->client->connectionState();
+            $this->onlineCheckedAt = time();
+            // Sem resposta da API: não bloqueia (o envio decide e faz retentativa).
+            $this->online = $state === null || $state === 'open';
+            if (!$this->online && !$this->warnedOffline) {
+                Logger::warning('worker', "WhatsApp não está conectado (estado: $state). Fila aguardando: conecte em Integrações > Conectar WhatsApp.");
+                $this->warnedOffline = true;
+            }
+            if ($this->online) {
+                $this->warnedOffline = false;
+            }
+        }
+        return $this->online;
     }
 
     private function beat(string $info): void
