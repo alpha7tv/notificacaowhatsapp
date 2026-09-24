@@ -44,8 +44,9 @@ $isAdmin = App\Core\Auth::isAdmin();
     </ul>
     <?php if ($homolog && $isAdmin): ?>
       <?php if ($allOk): ?>
-      <form method="post" action="/homologacao/liberar" class="form" data-confirm="ATENÇÃO: a partir de agora as mensagens serão enviadas aos CLIENTES REAIS. Mensagens pendentes criadas durante a homologação serão canceladas. Continuar?">
+      <form method="post" action="/homologacao/liberar" class="form" data-confirm="ATENÇÃO: a partir de agora as mensagens serão enviadas aos CLIENTES REAIS. Continuar?">
         <?= csrf_field() ?>
+        <label class="check"><input type="checkbox" name="keep_pending" value="1" checked> Manter as <?= (int) $pendingCount ?> mensagem(ns) pendente(s) e enviá-las aos clientes (espaçadas pelo intervalo anti-bloqueio). Desmarque para cancelá-las.</label>
         <label>Digite LIBERAR para confirmar<input name="confirm" required pattern="LIBERAR" autocomplete="off"></label>
         <label>Sua senha<input type="password" name="password" required autocomplete="current-password"></label>
         <button class="btn btn-primary btn-lg">LIBERAR PRODUÇÃO</button>

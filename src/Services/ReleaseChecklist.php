@@ -102,14 +102,24 @@ final class ReleaseChecklist
         return true;
     }
 
-    public static function release(int $userId): void
+    /**
+     * @param bool $keepPending true: as mensagens pendentes criadas na homologação seguem para os
+     *   clientes reais (espaçadas pelo intervalo anti-bloqueio e revalidadas no envio);
+     *   false: são canceladas.
+     */
+    public static function release(int $userId, bool $keepPending = false): void
     {
-        $cancelled = Db::run("UPDATE messages SET status = 'cancelled', status_reason = 'Criada durante a homologação'
-            WHERE status = 'pending' AND is_test = 0")->rowCount();
+        $cancelled = 0;
+        $kept = (int) Db::value("SELECT COUNT(*) FROM messages WHERE status = 'pending' AND is_test = 0");
+        if (!$keepPending) {
+            $cancelled = Db::run("UPDATE messages SET status = 'cancelled', status_reason = 'Criada durante a homologação'
+                WHERE status = 'pending' AND is_test = 0")->rowCount();
+            $kept = 0;
+        }
         Settings::set('mode', 'production', $userId);
         Settings::set('production_released_at', now_str(), $userId);
-        Audit::log('production.release', 'settings', 'mode', ['cancelled_pending' => $cancelled]);
-        Logger::warning('app', "SISTEMA LIBERADO PARA PRODUÇÃO — envios reais habilitados ($cancelled pendência(s) da homologação cancelada(s))");
+        Audit::log('production.release', 'settings', 'mode', ['cancelled_pending' => $cancelled, 'kept_pending' => $kept]);
+        Logger::warning('app', "SISTEMA LIBERADO PARA PRODUÇÃO — envios reais habilitados ($kept pendente(s) mantida(s), $cancelled cancelada(s))");
     }
 
     public static function backToHomologation(int $userId): void

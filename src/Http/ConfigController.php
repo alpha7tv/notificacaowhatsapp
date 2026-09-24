@@ -376,6 +376,7 @@ final class ConfigController
             'allOk' => ReleaseChecklist::allPassed($items),
             'tests' => ReleaseChecklist::TESTS,
             'sentHomolog' => (int) Db::value('SELECT COUNT(*) FROM messages WHERE homologation = 1 AND is_test = 0 AND sent_at >= CURDATE()'),
+            'pendingCount' => (int) Db::value("SELECT COUNT(*) FROM messages WHERE status = 'pending' AND is_test = 0"),
         ]);
     }
 
@@ -428,8 +429,10 @@ final class ConfigController
             Response::flash('error', 'Ainda há itens pendentes no checklist.');
             Response::redirect('/homologacao');
         }
-        ReleaseChecklist::release((int) $u['id']);
-        Response::flash('success', 'Sistema liberado para PRODUÇÃO. As mensagens agora vão para os clientes reais.');
+        $keep = isset($_POST['keep_pending']);
+        ReleaseChecklist::release((int) $u['id'], $keep);
+        Response::flash('success', 'Sistema liberado para PRODUÇÃO. As mensagens agora vão para os clientes reais'
+            . ($keep ? ', começando pelas pendentes, espaçadas pelo intervalo anti-bloqueio.' : '.'));
         Response::redirect('/homologacao');
     }
 
