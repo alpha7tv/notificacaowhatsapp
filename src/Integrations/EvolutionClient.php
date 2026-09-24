@@ -121,6 +121,41 @@ final class EvolutionClient
         return ['ok' => true, 'id' => is_string($id) ? $id : null, 'error' => null, 'retryable' => false];
     }
 
+    /**
+     * Inicia a conexão da instância. Retorna o QR Code (imagem base64) e/ou o código de
+     * pareamento (quando $number é informado: o usuário digita o código no WhatsApp).
+     * @return array{ok:bool,qr:?string,pairing:?string,state:?string,error:?string}
+     */
+    public function connect(?string $number = null): array
+    {
+        $path = '/instance/connect/' . $this->inst() . ($number ? '?number=' . rawurlencode($number) : '');
+        $r = $this->call('GET', $path, null, 30);
+        if ($r['error']) {
+            return ['ok' => false, 'qr' => null, 'pairing' => null, 'state' => null, 'error' => $r['error']];
+        }
+        $j = $r['json'] ?? [];
+        $qr = $j['base64'] ?? $j['qrcode']['base64'] ?? null;
+        $pairing = $j['pairingCode'] ?? $j['qrcode']['pairingCode'] ?? null;
+        $state = $j['instance']['state'] ?? null;
+        if (is_string($qr) && !str_starts_with($qr, 'data:image/')) {
+            $qr = 'data:image/png;base64,' . $qr;
+        }
+        return [
+            'ok' => true,
+            'qr' => is_string($qr) && preg_match('#^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$#', $qr) ? $qr : null,
+            'pairing' => is_string($pairing) && preg_match('/^[A-Z0-9-]{4,12}$/i', $pairing) ? $pairing : null,
+            'state' => is_string($state) ? $state : null,
+            'error' => null,
+        ];
+    }
+
+    /** Desconecta o número da instância (será necessário escanear o QR Code novamente). */
+    public function logout(): array
+    {
+        $r = $this->call('DELETE', '/instance/logout/' . $this->inst(), null, 20);
+        return ['ok' => $r['error'] === null, 'error' => $r['error']];
+    }
+
     /** Configura o webhook da instância para apontar para a API deste sistema. */
     public function setWebhook(string $url, string $token): array
     {

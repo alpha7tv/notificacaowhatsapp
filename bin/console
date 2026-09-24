@@ -199,6 +199,23 @@ switch ($cmd) {
         out((string) Settings::get($k, ''));
         break;
 
+    case 'evolution:configure':
+        // Usado por deploy/install-evolution.sh. A API key vem pela variável EVOLUTION_APIKEY
+        // (nunca pela linha de comando, que fica visível em "ps").
+        $key = (string) getenv('EVOLUTION_APIKEY');
+        $url = (string) ($opts['url'] ?? '');
+        $inst = (string) ($opts['instance'] ?? '');
+        if ($key === '' || !preg_match('#^https?://#', $url) || !preg_match('/^[a-zA-Z0-9_-]{2,40}$/', $inst)) {
+            fail('Informe --url, --instance e a variável EVOLUTION_APIKEY.');
+        }
+        Settings::set('evolution_url', rtrim($url, '/'));
+        Settings::set('evolution_instance', $inst);
+        Settings::set('evolution_version', ($opts['version'] ?? 'v2') === 'v1' ? 'v1' : 'v2');
+        Settings::set('evolution_apikey', $key);
+        Audit::log('integration.whatsapp.configure_cli', 'settings', 'whatsapp', ['url' => $url, 'instance' => $inst]);
+        out('Evolution API configurada no sistema.');
+        break;
+
     case 'mode:homologation':
         Settings::set('mode', 'homologation');
         Audit::log('production.revert_cli', 'settings', 'mode');

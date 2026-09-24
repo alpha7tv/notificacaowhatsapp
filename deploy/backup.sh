@@ -77,7 +77,7 @@ PHP_VER=$(detect_php_version)
 for f in /etc/nginx/sites-available/fiberlink-*.conf /etc/nginx/snippets/fiberlink-*.conf /etc/nginx/conf.d/fiberlink.conf \
          "${SYSTEMD_DIR}"/fiberlink-* "/etc/php/${PHP_VER}/fpm/pool.d/fiberlink.conf" /etc/redis/fiberlink.conf \
          /etc/mysql/mariadb.conf.d/60-fiberlink.cnf /etc/fail2ban/jail.d/fiberlink.local /etc/fail2ban/filter.d/fiberlink-auth.conf \
-         /etc/logrotate.d/fiberlink; do
+         /etc/logrotate.d/fiberlink /opt/evolution/.env /opt/evolution/docker-compose.yml; do
   [[ -e "$f" ]] && cp -a --parents "$f" "${WORK}/config/"
 done
 for d in status uploads; do

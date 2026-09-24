@@ -195,18 +195,25 @@ Menu **Integrações → SGP**:
 
 ## PASSO 7 — Configurar o WhatsApp
 
-O envio usa a **Evolution API** (conexão por QR Code). Você precisa de uma instância da
-Evolution API já instalada e conectada ao número da empresa.
+O envio usa a **Evolution API** (conexão por QR Code), instalada **na própria VPS** com um comando:
 
-Menu **Integrações → WhatsApp**:
+```bash
+cd ~/fiberlink-notificacoes
+sudo ./deploy/install-evolution.sh
+```
 
-1. **URL da Evolution API**, **nome da instância** e **API key**.
-2. **Salvar WhatsApp** → **Testar conexão** (deve aparecer *conectado*).
-3. **Configurar webhook** — aponta a Evolution API para este sistema (status de entrega/leitura).
-4. **Validar número**.
+Ele instala tudo (Docker, banco da Evolution), gera a chave de acesso e já configura o sistema.
+A Evolution fica acessível **somente dentro da VPS** (127.0.0.1:8080), nunca pela internet.
 
-> A Evolution API não é oficial da Meta. Para reduzir o risco de bloqueio do número, mantenha
-> o intervalo entre mensagens (SISTEMA → CONFIGURAÇÕES) em 10 segundos ou mais.
+Depois, no painel: **Integrações → 📱 Conectar WhatsApp (QR Code)**
+
+1. No celular da empresa: **WhatsApp → ⋮ → Aparelhos conectados → Conectar aparelho**.
+2. Aponte a câmera para o QR Code da tela. A página mostra ✅ quando conectar.
+   (Sem câmera? Use "Gerar código": digite o código de 8 letras no WhatsApp.)
+3. Volte em **Integrações** e clique em **Configurar webhook** e **Validar número**.
+
+> A Evolution API não é oficial da Meta. Use um número exclusivo da empresa e mantenha o intervalo
+> entre mensagens (SISTEMA → CONFIGURAÇÕES) em 10 segundos ou mais para reduzir o risco de bloqueio.
 
 ---
 

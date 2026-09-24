@@ -94,3 +94,5 @@ details summary{cursor:pointer}
   .content{padding:16px}.topbar{padding:12px 16px}.topbar-user .muted{display:none}
   .dropdown-body{width:calc(100vw - 32px);right:auto;left:0}
 }
+.qr{display:block;width:280px;max-width:100%;height:auto;background:#fff;padding:10px;border-radius:10px;margin:8px 0 12px}
+.pairing-code{font-family:ui-monospace,Consolas,monospace;font-size:2.2rem;font-weight:700;letter-spacing:.18em;margin:10px 0 16px}

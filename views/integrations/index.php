@@ -64,6 +64,7 @@ $apiBase = rtrim((string) App\Core\App::env('API_URL', ''), '/');
     </form>
     <?php if ($isAdmin && $waConfigured): ?>
     <hr>
+    <p><a class="btn btn-primary btn-lg" href="/integracoes/whatsapp/conectar"><?= $waState === 'open' ? '✅ WhatsApp conectado — ver detalhes' : '📱 Conectar WhatsApp (QR Code)' ?></a></p>
     <div class="row wrap">
       <form method="post" action="/integracoes/whatsapp/testar" class="inline"><?= csrf_field() ?><button class="btn">Testar conexão</button></form>
       <form method="post" action="/homologacao/validar-numero" class="inline"><?= csrf_field() ?><input type="hidden" name="back" value="integracoes"><button class="btn">Validar número</button></form>

@@ -63,6 +63,8 @@ $r->post('/integracoes/sgp/sincronizar', [ConfigController::class, 'syncNow']);
 $r->post('/integracoes/whatsapp', [ConfigController::class, 'saveWhatsapp']);
 $r->post('/integracoes/whatsapp/testar', [ConfigController::class, 'testWhatsapp']);
 $r->post('/integracoes/whatsapp/webhook', [ConfigController::class, 'setWebhook']);
+$r->get('/integracoes/whatsapp/conectar', [ConfigController::class, 'connectWhatsapp']);
+$r->post('/integracoes/whatsapp/desconectar', [ConfigController::class, 'logoutWhatsapp']);
 $r->post('/integracoes/webhooks/revelar', [ConfigController::class, 'revealWebhooks']);
 $r->get('/homologacao', [ConfigController::class, 'homologation']);
 $r->post('/homologacao/salvar', [ConfigController::class, 'saveHomologation']);

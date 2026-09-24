@@ -296,6 +296,61 @@ final class ConfigController
         Response::redirect('/integracoes');
     }
 
+    /** Tela "Conectar WhatsApp": QR Code (ou código de pareamento) atualizado automaticamente. */
+    public static function connectWhatsapp(): never
+    {
+        Auth::require(true);
+        $wa = EvolutionClient::fromSettings();
+        if (!$wa->configured()) {
+            Response::flash('error', 'Configure a Evolution API primeiro.');
+            Response::redirect('/integracoes');
+        }
+        $state = $wa->connectionState();
+        $conn = null;
+        $number = null;
+        if ($state !== 'open' && $state !== null) {
+            $rawNumber = Request::str('numero');
+            $number = $rawNumber !== '' ? Phone::normalize($rawNumber) : null;
+            if ($rawNumber !== '' && !$number) {
+                Response::flash('error', 'Número inválido. Use DDD + número, ex.: (16) 99999-9999.');
+                Response::redirect('/integracoes/whatsapp/conectar');
+            }
+            $conn = $wa->connect($number);
+        }
+        if ($state === 'open') {
+            Settings::set('whatsapp_state', 'open');
+            Settings::set('whatsapp_state_at', now_str());
+            if (!Settings::get('whatsapp_owner_number')) {
+                $owner = $wa->ownerNumber();
+                if ($owner) {
+                    Settings::set('whatsapp_owner_number', $owner);
+                }
+            }
+        }
+        View::page('integrations/connect', [
+            'title' => 'Conectar WhatsApp',
+            'state' => $state,
+            'conn' => $conn,
+            'number' => $number,
+            'owner' => Settings::get('whatsapp_owner_number'),
+        ]);
+    }
+
+    public static function logoutWhatsapp(): never
+    {
+        Auth::require(true);
+        if (!Auth::confirmPassword((string) ($_POST['password'] ?? ''))) {
+            Response::flash('error', 'Senha incorreta.');
+            Response::redirect('/integracoes/whatsapp/conectar');
+        }
+        $r = EvolutionClient::fromSettings()->logout();
+        Settings::set('whatsapp_owner_number', '');
+        Audit::log('integration.whatsapp.logout', 'settings', 'whatsapp');
+        Logger::warning('whatsapp', 'Número do WhatsApp desconectado pelo painel');
+        Response::flash($r['ok'] ? 'success' : 'error', $r['ok'] ? 'WhatsApp desconectado. Escaneie o QR Code para conectar outro número.' : 'Falha ao desconectar: ' . $r['error']);
+        Response::redirect('/integracoes/whatsapp/conectar');
+    }
+
     /** Mostra as URLs completas (com token) somente após confirmar a senha. */
     public static function revealWebhooks(): never
     {
