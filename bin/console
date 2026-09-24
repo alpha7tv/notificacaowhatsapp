@@ -241,9 +241,11 @@ switch ($cmd) {
         $t('JWT (JWT_SECRET)', static fn () => (Jwt::decode(Jwt::encode(['sub' => 1], 60))['sub'] ?? 0) === 1);
         $t('Lock distribuído', static function () {
             $a = Lock::acquire('selftest', 10);
-            $b = Lock::acquire('selftest', 10);
+            $b = Lock::acquire('selftest', 10);   // deve falhar: já está em uso
             Lock::release('selftest');
-            return $a && !$b;
+            $c = Lock::acquire('selftest', 10);   // deve funcionar: foi liberado
+            Lock::release('selftest');
+            return $a && !$b && $c;
         });
         $t('Modelo de mensagem', static fn () => str_contains(TemplateRenderer::render('Olá {{nome}}{{#pix}} PIX{{/pix}}', ['nome' => 'A', 'pix' => '']), 'Olá A') );
         $t('Normalização de telefone', static fn () => Phone::normalize('(11) 98765-4321') === '5511987654321');

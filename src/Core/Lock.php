@@ -58,8 +58,9 @@ final class Lock
             if ($r) {
                 try {
                     $lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
-                    // eval() não aplica OPT_PREFIX automaticamente; _prefix() aplica.
-                    $r->eval($lua, [$r->_prefix('lock:' . $name), $token], 1);
+                    // O phpredis aplica OPT_PREFIX às chaves (KEYS) do eval automaticamente:
+                    // passar a chave SEM prefixo (verificado em produção com phpredis 5.3).
+                    $r->eval($lua, ['lock:' . $name, $token], 1);
                 } catch (\Throwable) {
                     RedisConn::reset();
                 }
