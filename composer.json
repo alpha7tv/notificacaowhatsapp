@@ -1,0 +1,30 @@
+{
+    "name": "fiberlink/notificacoes",
+    "description": "Fiber Link - notificações de cobrança via WhatsApp integradas ao SGP",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*"
+    },
+    "suggest": {
+        "ext-redis": "Locks distribuídos do scheduler/worker via Redis"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

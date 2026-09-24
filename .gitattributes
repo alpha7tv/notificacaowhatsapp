@@ -1,0 +1,6 @@
+# Scripts de shell PRECISAM ter final de linha LF, mesmo quando editados no Windows.
+* text=auto eol=lf
+*.sh text eol=lf
+bin/console text eol=lf
+*.png binary
+*.ico binary

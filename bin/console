@@ -1,0 +1,266 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/*
+ * Console administrativo do Fiber Link Notificações.
+ * Uso: php bin/console <comando> [opções]      (php bin/console help)
+ */
+
+if (PHP_SAPI !== 'cli') {
+    exit(1);
+}
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+use App\Core\Audit;
+use App\Core\Crypto;
+use App\Core\Db;
+use App\Core\Jwt;
+use App\Core\Lock;
+use App\Core\Logger;
+use App\Core\Masker;
+use App\Core\Migrator;
+use App\Core\Settings;
+use App\Services\HealthService;
+use App\Services\Phone;
+use App\Services\Planner;
+use App\Services\Scheduler;
+use App\Services\SyncService;
+use App\Services\SystemJobs;
+use App\Services\TemplateRenderer;
+use App\Services\Worker;
+
+$args = array_slice($argv, 1);
+$cmd = array_shift($args) ?? 'help';
+$opts = [];
+$pos = [];
+foreach ($args as $a) {
+    if (preg_match('/^--([a-z0-9-]+)(?:=(.*))?$/', $a, $m)) {
+        $opts[$m[1]] = $m[2] ?? true;
+    } else {
+        $pos[] = $a;
+    }
+}
+
+function out(string $s): void
+{
+    fwrite(STDOUT, $s . PHP_EOL);
+}
+
+function fail(string $s, int $code = 1): never
+{
+    fwrite(STDERR, 'ERRO: ' . $s . PHP_EOL);
+    exit($code);
+}
+
+switch ($cmd) {
+    case 'migrate':
+        $done = (new Migrator())->migrate(static fn ($m) => out($m));
+        out($done ? count($done) . ' migration(s) aplicada(s).' : 'Banco já está atualizado.');
+        break;
+
+    case 'migrate:status':
+        $m = new Migrator();
+        $pending = $m->pending();
+        out('Aplicadas: ' . count($m->applied()) . ' | Pendentes: ' . count($pending));
+        foreach ($pending as $p) {
+            out("  pendente: $p");
+        }
+        if (!empty($opts['against'])) {
+            // Migrations aplicadas no banco que a release informada NÃO conhece (rollback arriscado)
+            foreach ($m->unknownTo(rtrim((string) $opts['against'], '/') . '/database/migrations') as $u) {
+                out("  desconhecida: $u");
+            }
+        }
+        exit(!empty($opts['check']) && $pending ? 3 : 0);
+
+    case 'admin:create':
+        $name = trim((string) ($opts['name'] ?? ''));
+        $email = mb_strtolower(trim((string) ($opts['email'] ?? '')));
+        $password = rtrim((string) stream_get_contents(STDIN), "\r\n");
+        if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            fail('Informe --name e --email válidos.');
+        }
+        if (mb_strlen($password) < 10) {
+            fail('A senha deve ter pelo menos 10 caracteres (enviada via entrada padrão).');
+        }
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $existing = Db::value('SELECT id FROM users WHERE email = ?', [$email]);
+        if ($existing) {
+            if (empty($opts['update'])) {
+                fail("Já existe um usuário com o e-mail $email (use --update para redefinir a senha).", 2);
+            }
+            Db::update('users', ['name' => $name, 'password_hash' => $hash, 'role' => 'admin', 'active' => 1], 'id = ?', [$existing]);
+            Audit::log('user.password_reset_cli', 'user', (string) $existing);
+            out("Administrador $email atualizado.");
+        } else {
+            $id = Db::insert('users', ['name' => $name, 'email' => $email, 'password_hash' => $hash, 'role' => 'admin']);
+            Audit::log('user.create_cli', 'user', (string) $id);
+            out("Administrador $email criado (id $id).");
+        }
+        break;
+
+    case 'admin:count':
+        out((string) Db::value("SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1"));
+        break;
+
+    case 'worker:run':
+        Logger::echoToStdout();
+        (new Worker())->run((int) ($opts['max-seconds'] ?? 3600), (int) ($opts['max-jobs'] ?? 1000), !empty($opts['once']));
+        break;
+
+    case 'scheduler:run':
+        Logger::echoToStdout(!empty($opts['verbose']));
+        $r = Scheduler::runDue();
+        foreach ($r as $task => $status) {
+            out("$task: $status");
+        }
+        break;
+
+    case 'scheduler:task':
+        $name = $pos[0] ?? fail('Informe o nome da rotina.');
+        out($name . ': ' . Scheduler::runTask($name));
+        break;
+
+    case 'sgp:sync':
+        Logger::echoToStdout();
+        $r = (new SyncService())->run(isset($opts['limit']) ? (int) $opts['limit'] : null);
+        out(json_encode($r, JSON_UNESCAPED_UNICODE));
+        break;
+
+    case 'health':
+        $checks = HealthService::full(empty($opts['no-live']));
+        if (!empty($opts['json'])) {
+            out((string) json_encode($checks, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            break;
+        }
+        foreach ($checks as $k => $c) {
+            out(str_pad(strtoupper($k), 14) . ' ' . $c['status']);
+        }
+        break;
+
+    case 'health:db':
+        exit(Db::ping() ? 0 : 1);
+
+    case 'health:migrations':
+        exit((new Migrator())->pending() ? 1 : 0);
+
+    case 'health:heartbeat':
+        $comp = $pos[0] ?? 'worker';
+        $max = (int) ($opts['max-age'] ?? 180);
+        $age = App\Services\Heartbeat::age($comp);
+        out($age === null ? 'never' : (string) $age);
+        exit($age !== null && $age <= $max ? 0 : 1);
+
+    case 'health:integrations':
+        $i = HealthService::integrations(empty($opts['no-live']));
+        out('sgp=' . $i['sgp']);
+        out('whatsapp=' . $i['whatsapp']);
+        break;
+
+    case 'jobs:claim':
+        $job = SystemJobs::claim();
+        if ($job) {
+            out($job['id'] . ' ' . $job['type']);
+        }
+        break;
+
+    case 'jobs:finish':
+        [$id, $status] = [(int) ($pos[0] ?? 0), (string) ($pos[1] ?? 'failed')];
+        SystemJobs::finish($id, $status, implode(' ', array_slice($pos, 2)));
+        break;
+
+    case 'log:write':
+        [$cat, $level] = [(string) ($pos[0] ?? 'deploy'), (string) ($pos[1] ?? 'info')];
+        Logger::log($cat, $level, implode(' ', array_slice($pos, 2)));
+        break;
+
+    case 'deploy:record':
+        Db::insert('deployments', [
+            'version' => (string) ($opts['version'] ?? '?'),
+            'release_name' => (string) ($opts['release'] ?? '?'),
+            'previous_release' => ($opts['previous'] ?? '') ?: null,
+            'kind' => (string) ($opts['kind'] ?? 'deploy'),
+            'status' => (string) ($opts['status'] ?? 'success'),
+            'backup_file' => ($opts['backup'] ?? '') ?: null,
+            'git_ref' => ($opts['ref'] ?? '') ?: null,
+            'duration_s' => (int) ($opts['duration'] ?? 0),
+            'message' => mb_substr((string) ($opts['message'] ?? ''), 0, 1000),
+            'created_at' => now_str(),
+        ]);
+        break;
+
+    case 'settings:get':
+        $k = $pos[0] ?? fail('Informe a chave.');
+        if (in_array($k, Settings::SECRET_KEYS, true)) {
+            fail('Chave secreta não pode ser exibida.');
+        }
+        out((string) Settings::get($k, ''));
+        break;
+
+    case 'mode:homologation':
+        Settings::set('mode', 'homologation');
+        Audit::log('production.revert_cli', 'settings', 'mode');
+        out('Sistema em MODO HOMOLOGAÇÃO.');
+        break;
+
+    case 'selftest':
+        // Testes funcionais SEGUROS: nada é enviado e nada é gravado permanentemente.
+        $fails = 0;
+        $t = static function (string $name, callable $fn) use (&$fails) {
+            try {
+                $ok = (bool) $fn();
+            } catch (\Throwable $e) {
+                $ok = false;
+                $name .= ' (' . $e->getMessage() . ')';
+            }
+            out($name . str_repeat('.', max(2, 48 - mb_strlen($name))) . ($ok ? ' OK' : ' FALHOU'));
+            $fails += $ok ? 0 : 1;
+        };
+        $t('Banco conectado', static fn () => Db::ping());
+        $t('Migrations aplicadas', static fn () => (new Migrator())->pending() === []);
+        $t('Criptografia (APP_KEY)', static fn () => Crypto::decrypt(Crypto::encrypt('abc')) === 'abc');
+        $t('JWT (JWT_SECRET)', static fn () => (Jwt::decode(Jwt::encode(['sub' => 1], 60))['sub'] ?? 0) === 1);
+        $t('Lock distribuído', static function () {
+            $a = Lock::acquire('selftest', 10);
+            $b = Lock::acquire('selftest', 10);
+            Lock::release('selftest');
+            return $a && !$b;
+        });
+        $t('Modelo de mensagem', static fn () => str_contains(TemplateRenderer::render('Olá {{nome}}{{#pix}} PIX{{/pix}}', ['nome' => 'A', 'pix' => '']), 'Olá A') );
+        $t('Normalização de telefone', static fn () => Phone::normalize('(11) 98765-4321') === '5511987654321');
+        $t('Máscara de dados sensíveis', static fn () => !str_contains(Masker::json(['senha' => 'segredo123456', 'token' => 'abcdefghijkl1234']), 'segredo123456'));
+        $t('Idempotência da fila (transação revertida)', static function () {
+            $pdo = Db::pdo();
+            $pdo->beginTransaction();
+            try {
+                $k = 'selftest:' . bin2hex(random_bytes(6));
+                $sql = "INSERT INTO messages (idempotency_key, event, destination, body, status, available_at) VALUES (?, 'test', '', 'x', 'cancelled', NOW()) ON DUPLICATE KEY UPDATE id = id";
+                $a = Db::run($sql, [$k])->rowCount();
+                $b = Db::run($sql, [$k])->rowCount();
+                return $a === 1 && $b === 0;
+            } finally {
+                $pdo->rollBack();
+            }
+        });
+        $t('Janela de envio', static fn () => Planner::nextSendTime('08:00:00', '20:00:00', new DateTimeImmutable('2030-01-07 22:00:00'))->format('H:i') === '08:00');
+        $t('Diretórios graváveis', static function () {
+            $f = storage_path('tmp/selftest-' . getmypid());
+            @mkdir(dirname($f), 0775, true);
+            $ok = file_put_contents($f, 'x') === 1;
+            @unlink($f);
+            return $ok;
+        });
+        out($fails === 0 ? 'SELFTEST: TUDO OK' : "SELFTEST: $fails FALHA(S)");
+        exit($fails === 0 ? 0 : 1);
+
+    case 'help':
+    default:
+        out("Comandos:\n  migrate | migrate:status [--against=DIR] [--check]\n  admin:create --name= --email= [--update] (senha via STDIN) | admin:count\n"
+            . "  worker:run [--once] | scheduler:run | scheduler:task NOME | sgp:sync [--limit=N]\n"
+            . "  health [--json] [--no-live] | health:db | health:migrations | health:heartbeat worker|scheduler | health:integrations\n"
+            . "  jobs:claim | jobs:finish ID success|failed MSG | log:write CAT NIVEL MSG | deploy:record ...\n"
+            . "  settings:get CHAVE | mode:homologation | selftest");
+        exit($cmd === 'help' ? 0 : 1);
+}
