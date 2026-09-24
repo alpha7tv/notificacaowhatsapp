@@ -193,7 +193,7 @@ PACKAGES=(
   nginx mariadb-server mariadb-client redis-server
   "php${PHP_VER}-fpm" "php${PHP_VER}-cli" "php${PHP_VER}-mysql" "php${PHP_VER}-curl" "php${PHP_VER}-mbstring"
   "php${PHP_VER}-xml" "php${PHP_VER}-zip" "php${PHP_VER}-intl" "php${PHP_VER}-redis" "php${PHP_VER}-opcache"
-  composer git curl unzip rsync certbot fail2ban ufw dnsutils cron logrotate openssl ca-certificates tar gzip acl
+  composer git curl unzip rsync certbot fail2ban ufw dnsutils cron logrotate openssl ca-certificates tar gzip acl qrencode
 )
 apt-get "${APT_OPTS[@]}" install --no-install-recommends "${PACKAGES[@]}"
 ok "Pacotes instalados"

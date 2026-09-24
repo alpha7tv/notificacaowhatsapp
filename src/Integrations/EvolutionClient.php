@@ -122,6 +122,26 @@ final class EvolutionClient
     }
 
     /**
+     * Envia arquivo (PDF) ou imagem (PNG/JPEG) em base64.
+     * @param 'document'|'image' $type
+     * @return array{ok:bool,id:?string,error:?string,retryable:bool}
+     */
+    public function sendMedia(string $number, string $type, string $mimetype, string $binary, string $fileName, string $caption = ''): array
+    {
+        $b64 = base64_encode($binary);
+        $body = $this->version === 'v1'
+            ? ['number' => $number, 'options' => ['delay' => 1200], 'mediaMessage' => ['mediatype' => $type, 'fileName' => $fileName, 'caption' => $caption, 'media' => $b64]]
+            : ['number' => $number, 'mediatype' => $type, 'mimetype' => $mimetype, 'caption' => $caption, 'media' => $b64, 'fileName' => $fileName, 'delay' => 1200];
+        $r = $this->call('POST', '/message/sendMedia/' . $this->inst(), $body, 60);
+        if ($r['error']) {
+            Logger::warning('whatsapp', "Falha no envio de $type: " . $r['error'], ['to' => mask_phone($number)]);
+            return ['ok' => false, 'id' => null, 'error' => $r['error'], 'retryable' => $r['status'] === 0 || $r['status'] >= 500];
+        }
+        $id = $r['json']['key']['id'] ?? null;
+        return ['ok' => true, 'id' => is_string($id) ? $id : null, 'error' => null, 'retryable' => false];
+    }
+
+    /**
      * Inicia a conexão da instância. Retorna o QR Code (imagem base64) e/ou o código de
      * pareamento (quando $number é informado: o usuário digita o código no WhatsApp).
      * @return array{ok:bool,qr:?string,pairing:?string,state:?string,error:?string}

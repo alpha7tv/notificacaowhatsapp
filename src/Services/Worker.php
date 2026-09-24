@@ -226,6 +226,17 @@ final class Worker
                 'homologation' => ($homolog || $isTest) ? 1 : 0, 'last_error' => null, 'status_reason' => null,
             ]);
             Logger::info('whatsapp', "Mensagem #$id enviada" . ($homolog && !$isTest ? ' (homologação → número de teste)' : ''), ['to' => mask_phone($to), 'event' => $m['event']]);
+
+            // Cobranças: PDF da fatura + QR Code PIX + código copia e cola separado
+            $isCharge = in_array($m['event'], Planner::DUE_EVENTS, true) || ($isTest && $m['invoice_id']);
+            if ($isCharge && $m['invoice_id']) {
+                $invoice = Db::one('SELECT * FROM invoices WHERE id = ?', [$m['invoice_id']]);
+                if ($invoice && $invoice['status'] === 'open') {
+                    usleep(1500000);
+                    $att = InvoiceAttachments::send($this->client, $to, $invoice);
+                    Db::update('messages', ['attachments' => $att ? implode(',', $att) : 'nenhum'], 'id = ?', [$id]);
+                }
+            }
             if ($isTest && $m['test_code']) {
                 ReleaseChecklist::markPassed((string) $m['test_code'], 'Mensagem de teste #' . $id . ' enviada em ' . date('d/m/Y H:i'));
             }

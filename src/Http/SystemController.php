@@ -148,6 +148,9 @@ final class SystemController
             'send_days' => implode(',', $days ?: ['1', '2', '3', '4', '5', '6']),
             'catchup_days' => (string) max(0, min(5, Request::int('catchup_days', 1))),
             'log_retention_days' => (string) max(7, min(3650, Request::int('log_retention_days', 90))),
+            'attach_pdf' => isset($_POST['attach_pdf']) ? '1' : '0',
+            'attach_pix_qr' => isset($_POST['attach_pix_qr']) ? '1' : '0',
+            'attach_pix_code' => isset($_POST['attach_pix_code']) ? '1' : '0',
         ];
         foreach ($values as $k => $v) {
             Settings::set($k, $v, $u['id']);

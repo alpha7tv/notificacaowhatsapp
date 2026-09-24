@@ -51,6 +51,12 @@ switch (true) {
         $save();
         echo json_encode(['key' => ['id' => $id, 'remoteJid' => $body['number'] . '@s.whatsapp.net'], 'status' => 'PENDING']);
         break;
+    case str_starts_with($path, '/message/sendMedia/'):
+        $id = 'MED' . count($s['sent']);
+        $s['sent'][] = ['id' => $id, 'number' => $body['number'], 'media' => $body['mediatype'] ?? '?', 'text' => $body['caption'] ?? ''];
+        $save();
+        echo json_encode(['key' => ['id' => $id]]);
+        break;
     case str_starts_with($path, '/webhook/set/'):
         $s['webhook'] = $body; $save();
         echo json_encode(['webhook' => ['enabled' => true]]);

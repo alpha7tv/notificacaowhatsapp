@@ -14,6 +14,11 @@
         <label class="check inline-check"><input type="checkbox" name="send_days[]" value="<?= $v ?>" <?= in_array($v, $days, true) ? 'checked' : '' ?>> <?= $l ?></label>
       <?php endforeach; ?>
     </fieldset>
+    <fieldset><legend>Junto com as cobranças (lembrete, vence hoje, atraso), enviar também:</legend>
+      <label class="check"><input type="checkbox" name="attach_pdf" value="1" <?= ($s['attach_pdf'] ?? '1') === '1' ? 'checked' : '' ?>> 📄 Fatura em PDF (link do SGP)</label>
+      <label class="check"><input type="checkbox" name="attach_pix_qr" value="1" <?= ($s['attach_pix_qr'] ?? '1') === '1' ? 'checked' : '' ?>> 🖼 Imagem do QR Code PIX</label>
+      <label class="check"><input type="checkbox" name="attach_pix_code" value="1" <?= ($s['attach_pix_code'] ?? '1') === '1' ? 'checked' : '' ?>> 📋 Código PIX copia e cola em mensagem separada</label>
+    </fieldset>
     <label>Tolerância para recuperar envios perdidos (dias)<input type="number" name="catchup_days" min="0" max="5" value="<?= (int) ($s['catchup_days'] ?? 1) ?>"></label>
     <h2>Retenção</h2>
     <label>Manter logs e webhooks por (dias)<input type="number" name="log_retention_days" min="7" max="3650" value="<?= (int) ($s['log_retention_days'] ?? 90) ?>"></label>

@@ -79,7 +79,11 @@ $mock(['wa_state' => 'open']);
 (new Worker())->run(60, 10, true);
 $sent = json_decode(file_get_contents($state), true)['sent'];
 $allToTest = $sent && !array_filter($sent, fn ($m) => $m['number'] !== '5511955556666');
-$check('Homologação: todos os envios vão para o número de teste', count($sent) === 2 && $allToTest);
+$check('Homologação: todos os envios vão para o número de teste', count($sent) >= 2 && $allToTest);
+$pixCode = (string) Db::value("SELECT pix_code FROM invoices WHERE sgp_id='9001'");
+$check('Cobrança: código PIX enviado SOZINHO em mensagem separada', $pixCode !== '' && in_array($pixCode, array_column($sent, 'text'), true));
+$check('Cobrança: texto principal não traz o código PIX', !array_filter($sent, fn ($m) => str_contains($m['text'], 'HOMOLOGAÇÃO') && str_contains($m['text'], $pixCode)));
+$check('Cobrança: anexos registrados na mensagem', (string) Db::value("SELECT attachments FROM messages m JOIN invoices i ON i.id=m.invoice_id WHERE i.sgp_id='9001' AND m.status='sent' LIMIT 1") !== '');
 $check('Homologação: mensagem identifica destino real mascarado', str_contains($sent[0]['text'], 'HOMOLOGAÇÃO') && !str_contains($sent[0]['text'], '5511987654321'));
 
 // 6) Pagamento: transição aberta -> paga gera evento, e cancela lembretes pendentes

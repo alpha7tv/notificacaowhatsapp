@@ -115,6 +115,11 @@ if ! confirm "Implantar a nova versão agora?" "S"; then info "Cancelado."; exit
 
 # 4-5) -------------------------------------------------------------------------
 step "4/13 Montando release e instalando dependências"
+# Pacotes do sistema exigidos por versões novas (instala só o que faltar)
+NEEDED_PKGS=(qrencode)
+for pkg in "${NEEDED_PKGS[@]}"; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || apt-get -y -q -o DPkg::Lock::Timeout=600 install "$pkg" >/dev/null
+done
 NEW_RELEASE=$(build_release "$MODE" "$SRC" | tail -n1)
 [[ -d "$NEW_RELEASE" && -f "${NEW_RELEASE}/bin/console" ]] || die "Release inválida."
 ok "Nova release: $(basename "$NEW_RELEASE")"

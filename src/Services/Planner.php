@@ -165,11 +165,24 @@ final class Planner
         if (!$rule) {
             return [false, 'Nenhuma regra/modelo encontrado para este evento.'];
         }
-        $body = "🧪 *TESTE DE HOMOLOGAÇÃO* — " . event_label($event) . "\n\n"
-            . TemplateRenderer::render((string) $rule['template_body'], TemplateRenderer::sampleVars());
+        // Cobranças: usa uma fatura REAL em aberto (com PDF e PIX) para testar também os anexos.
+        $invoice = null;
+        if (in_array($event, self::DUE_EVENTS, true)) {
+            $invoice = Db::one("SELECT * FROM invoices WHERE status = 'open' AND pdf_url IS NOT NULL AND pix_code IS NOT NULL
+                AND due_date >= CURDATE() ORDER BY due_date, id LIMIT 1");
+        }
+        $vars = TemplateRenderer::sampleVars();
+        if ($invoice) {
+            $customer = Db::one('SELECT * FROM customers WHERE id = ?', [$invoice['customer_id']]);
+            $contract = $invoice['contract_id'] ? Db::one('SELECT * FROM contracts WHERE id = ?', [$invoice['contract_id']]) : null;
+            $vars = TemplateRenderer::varsFor($customer, $invoice, $contract);
+        }
+        $body = "🧪 *TESTE DE HOMOLOGAÇÃO* — " . event_label($event) . ($invoice ? ' (fatura real de exemplo)' : '') . "\n\n"
+            . TemplateRenderer::render((string) $rule['template_body'], $vars);
         Db::insert('messages', [
             'idempotency_key' => 'test:' . $testCode . ':' . bin2hex(random_bytes(8)),
             'rule_id' => $rule['id'],
+            'invoice_id' => $invoice['id'] ?? null,
             'event' => 'test',
             'destination' => $testNumber,
             'body' => $body,
