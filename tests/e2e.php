@@ -85,6 +85,8 @@ $pixCode = (string) Db::value("SELECT pix_code FROM invoices WHERE sgp_id='9001'
 $check('Cobrança: código PIX enviado SOZINHO em mensagem separada', $pixCode !== '' && in_array($pixCode, array_column($sent, 'text'), true));
 $check('Cobrança: texto principal não traz o código PIX', !array_filter($sent, fn ($m) => str_contains($m['text'], 'HOMOLOGAÇÃO') && str_contains($m['text'], $pixCode)));
 $check('Cobrança: anexos registrados na mensagem', (string) Db::value("SELECT attachments FROM messages m JOIN invoices i ON i.id=m.invoice_id WHERE i.sgp_id='9001' AND m.status='sent' LIMIT 1") !== '');
+$check('Fatura completa só no lembrete D-3 (PDF/QR/PIX)', str_contains((string) Db::value("SELECT attachments FROM messages WHERE event='before_due' AND status='sent' LIMIT 1"), 'pix'));
+$check('Atraso D+1: só texto, sem PDF/QR/PIX', Db::value("SELECT attachments FROM messages WHERE event='after_due' AND status='sent' LIMIT 1") === null);
 $check('Homologação: mensagem identifica destino real mascarado', str_contains($sent[0]['text'], 'HOMOLOGAÇÃO') && !str_contains($sent[0]['text'], '5511987654321'));
 
 // 5b) Anti-bloqueio: intervalo de 10–15 min entre clientes; testes não esperam

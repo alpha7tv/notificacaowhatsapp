@@ -243,9 +243,11 @@ final class Worker
             ]);
             Logger::info('whatsapp', "Mensagem #$id enviada" . ($homolog && !$isTest ? ' (homologação → número de teste)' : ''), ['to' => mask_phone($to), 'event' => $m['event']]);
 
-            // Cobranças: PDF da fatura + QR Code PIX + código copia e cola separado
+            // Fatura completa (PDF + QR Code PIX + copia e cola) só nas regras marcadas — por padrão, "antes do vencimento".
+            // No dia do vencimento, nos atrasos e na suspensão vai apenas o texto.
             $isCharge = in_array($m['event'], Planner::DUE_EVENTS, true) || ($isTest && $m['invoice_id']);
-            if ($isCharge && $m['invoice_id']) {
+            $sendFull = $m['rule_id'] ? (int) Db::value('SELECT send_full FROM rules WHERE id = ?', [$m['rule_id']]) === 1 : false;
+            if ($isCharge && $sendFull && $m['invoice_id']) {
                 $invoice = Db::one('SELECT * FROM invoices WHERE id = ?', [$m['invoice_id']]);
                 if ($invoice && $invoice['status'] === 'open') {
                     usleep(random_int(3000000, 8000000));

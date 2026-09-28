@@ -1,12 +1,12 @@
 <?php
 $events = App\Http\ConfigController::EVENTS;
-$r = $edit ?? ['id' => 0, 'name' => '', 'event' => 'before_due', 'offset_days' => 3, 'template_id' => 0, 'active' => 1, 'send_start' => '08:00:00', 'send_end' => '20:00:00'];
+$r = $edit ?? ['id' => 0, 'name' => '', 'event' => 'before_due', 'offset_days' => 3, 'template_id' => 0, 'active' => 1, 'send_full' => 0, 'send_start' => '08:00:00', 'send_end' => '20:00:00'];
 $isAdmin = App\Core\Auth::isAdmin();
 ?>
 <p class="muted">Cada regra cria mensagens automaticamente. Uma mesma regra nunca envia duas vezes a mesma mensagem para a mesma fatura/contrato (chave de idempotência).</p>
 <div class="card">
 <table class="table">
-  <thead><tr><th>Regra</th><th>Quando</th><th>Modelo</th><th>Janela</th><th>Ativa</th><th></th></tr></thead>
+  <thead><tr><th>Regra</th><th>Quando</th><th>Modelo</th><th>Janela</th><th>Fatura completa</th><th>Ativa</th><th></th></tr></thead>
   <tbody>
   <?php foreach ($rules as $x): ?>
     <tr>
@@ -14,6 +14,7 @@ $isAdmin = App\Core\Auth::isAdmin();
       <td><?= e(event_label($x['event'])) ?><?= in_array($x['event'], ['before_due', 'after_due'], true) ? ' — ' . (int) $x['offset_days'] . ' dia(s)' : '' ?></td>
       <td><a href="/templates/<?= (int) $x['template_id'] ?>"><?= e($x['template_name']) ?></a></td>
       <td><?= e(substr($x['send_start'], 0, 5)) ?>–<?= e(substr($x['send_end'], 0, 5)) ?></td>
+      <td><?= !empty($x['send_full']) ? '<span class="badge badge-ok">PDF + QR + PIX</span>' : '<span class="badge badge-muted">Só texto</span>' ?></td>
       <td><?= $x['active'] ? '<span class="badge badge-ok">Sim</span>' : '<span class="badge badge-muted">Não</span>' ?></td>
       <td class="nowrap">
         <?php if ($isAdmin): ?>
@@ -48,6 +49,7 @@ $isAdmin = App\Core\Auth::isAdmin();
       <label>Enviar a partir de<input type="time" name="send_start" value="<?= e(substr($r['send_start'], 0, 5)) ?>" required></label>
       <label>até<input type="time" name="send_end" value="<?= e(substr($r['send_end'], 0, 5)) ?>" required></label>
     </div>
+    <label class="check"><input type="checkbox" name="send_full" value="1" <?= !empty($r['send_full']) ? 'checked' : '' ?>> Enviar a fatura completa (PDF + QR Code PIX + código copia e cola) — só para cobranças; desmarcado envia apenas o texto</label>
     <label class="check"><input type="checkbox" name="active" value="1" <?= $r['active'] ? 'checked' : '' ?>> Regra ativa</label>
     <div class="row"><button class="btn btn-primary">Salvar regra</button><?php if ($r['id']): ?><a class="btn btn-ghost" href="/regras">Cancelar</a><?php endif; ?></div>
   </form>

@@ -50,6 +50,7 @@ final class ConfigController
             'offset_days' => in_array($event, ['before_due', 'after_due'], true) ? max(0, min(90, Request::int('offset_days'))) : 0,
             'template_id' => Request::int('template_id'),
             'active' => isset($_POST['active']) ? 1 : 0,
+            'send_full' => isset($_POST['send_full']) && in_array($event, ['before_due', 'due_today', 'after_due'], true) ? 1 : 0,
             'send_start' => $start,
             'send_end' => $end,
         ];
