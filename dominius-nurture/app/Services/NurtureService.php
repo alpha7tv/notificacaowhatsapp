@@ -314,106 +314,170 @@ final class NurtureService
         )->rowCount();
     }
 
-    // ------------------------------------------------------------------ promoção manual (WhatsApp)
+    // ------------------------------------------------------------------ promoção manual (WhatsApp e/ou e-mail)
 
     /**
      * Programa uma promoção para as inscrições escolhidas no painel. O envio sai aos poucos (worker).
      * @param int[] $ids
-     * @return array{queued:int,skipped:int,broadcast:int}
+     * @return array{queued:int,people:int,skipped:int,broadcast:int}
      */
-    public static function queueBroadcast(string $message, array $ids): array
+    public static function queueBroadcast(string $message, array $ids, string $channel = 'whatsapp', string $subject = '', string $button = ''): array
     {
+        $channel = in_array($channel, ['whatsapp', 'email', 'both'], true) ? $channel : 'whatsapp';
         $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
-        $broadcastId = Database::insert('nurture_broadcasts', ['message' => $message, 'total' => 0, 'created_at' => Database::now()]);
+        $broadcastId = Database::insert('nurture_broadcasts', [
+            'message' => $message,
+            'subject' => $subject !== '' ? $subject : null,
+            'button' => $button !== '' ? $button : null,
+            'channel' => $channel,
+            'total' => 0,
+            'created_at' => Database::now(),
+        ]);
         $queued = 0;
+        $people = 0;
         foreach ($ids as $id) {
-            $sub = Database::fetch(
-                "SELECT id, name, phone_e164, status FROM nurture_subscriptions WHERE id = :id AND status <> 'unsubscribed' AND phone_e164 IS NOT NULL AND phone_e164 <> ''",
-                ['id' => $id]
-            );
+            $sub = Database::fetch("SELECT id, name, email, phone_e164 FROM nurture_subscriptions WHERE id = :id AND status <> 'unsubscribed'", ['id' => $id]);
             if (!$sub) {
                 continue;
             }
-            Database::insert('nurture_broadcast_items', [
-                'broadcast_id' => $broadcastId,
-                'subscription_id' => (int) $sub['id'],
-                'phone_e164' => $sub['phone_e164'],
-                'name' => $sub['name'],
-                'status' => 'pending',
-                'created_at' => Database::now(),
-            ]);
-            $queued++;
+            $added = 0;
+            foreach (['whatsapp', 'email'] as $ch) {
+                if ($channel !== 'both' && $channel !== $ch) {
+                    continue;
+                }
+                $dest = trim((string) ($ch === 'whatsapp' ? $sub['phone_e164'] : $sub['email']));
+                if ($dest === '') {
+                    continue;
+                }
+                Database::insert('nurture_broadcast_items', [
+                    'broadcast_id' => $broadcastId,
+                    'subscription_id' => (int) $sub['id'],
+                    'phone_e164' => (string) ($sub['phone_e164'] ?? ''),
+                    'name' => $sub['name'],
+                    'channel' => $ch,
+                    'status' => 'pending',
+                    'created_at' => Database::now(),
+                ]);
+                $added++;
+            }
+            $queued += $added;
+            $people += $added > 0 ? 1 : 0;
         }
         Database::query('UPDATE nurture_broadcasts SET total = :t WHERE id = :id', ['t' => $queued, 'id' => $broadcastId]);
-        return ['queued' => $queued, 'skipped' => count($ids) - $queued, 'broadcast' => $broadcastId];
+        return ['queued' => $queued, 'people' => $people, 'skipped' => count($ids) - $people, 'broadcast' => $broadcastId];
     }
 
-    /** Texto final da promoção para uma pessoa (nome e remetente + aviso de saída). */
-    public static function broadcastText(string $template, string $name): string
+    private static function placeholders(string $name): array
     {
-        $tr = [
+        return [
             '{first}' => explode(' ', trim($name))[0] ?: 'tudo bem',
             '{sender}' => (string) Env::get('NURTURE_SENDER_NAME', 'Carlos'),
             '{site}' => (string) setting('site_name', 'Dominius Play'),
         ];
-        $cfg = (array) require dirname(__DIR__, 2) . '/config/nurture_whatsapp.php';
-        return strtr($template, $tr) . (string) ($cfg['optout'] ?? '');
     }
 
-    /** Envia poucas mensagens por minuto, só em horário comercial e até o limite diário. */
+    /** Texto final da promoção no WhatsApp (nome e remetente + aviso de saída). */
+    public static function broadcastText(string $template, string $name): string
+    {
+        $cfg = (array) require dirname(__DIR__, 2) . '/config/nurture_whatsapp.php';
+        return strtr($template, self::placeholders($name)) . (string) ($cfg['optout'] ?? '');
+    }
+
+    /** Envia a promoção por e-mail, com o visual da sequência e o link de descadastro. */
+    public static function sendPromoEmail(string $to, string $name, string $subject, string $message, string $button, string $token, ?int $relatedId = null, string $template = 'nurture-broadcast'): array
+    {
+        $tr = self::placeholders($name);
+        $subjectFinal = strtr($subject, $tr);
+        $waNumber = trim((string) Env::get('NURTURE_WHATSAPP', ''));
+        $data = [
+            'subject' => $subjectFinal,
+            'title' => $subjectFinal,
+            'body' => strtr($message, $tr),
+            'cta' => $button !== '' ? $button : 'Falar no WhatsApp',
+            'waUrl' => whatsapp_link($waNumber !== '' ? $waNumber : null, 'Olá! Vi a promoção que você me enviou e quero saber mais.'),
+            'unsubUrl' => url('descadastrar/' . $token),
+            'sender' => (string) Env::get('NURTURE_SENDER_NAME', 'Carlos'),
+            'role' => (string) Env::get('NURTURE_SENDER_ROLE', 'Consultor de revendas'),
+        ];
+        try {
+            $html = View::make('emails.promo', $data);
+        } catch (\Throwable $e) {
+            Logger::error('Nurture: falha ao montar o e-mail de promoção', ['e' => $e->getMessage()]);
+            return ['ok' => false, 'error' => 'Falha ao montar o e-mail.'];
+        }
+        $text = str_replace('**', '', $data['body']) . "\n\n" . $data['cta'] . ': ' . $data['waUrl'] . "\n\n" . $data['sender'] . ' - ' . $data['role'] . "\n\nPara parar de receber: " . $data['unsubUrl'];
+        return Mailer::send($to, $subjectFinal, $html, $text, $template, 'nurture', $relatedId);
+    }
+
+    /** Envia poucas mensagens por minuto, só em horário comercial e até o limite diário de cada canal. */
     private static function runBroadcast(int $started): int
     {
-        if (!self::whatsappConfigured()) {
-            return 0;
-        }
         try {
             if (self::nextWindow(time()) > time() + 60) {
                 return 0;
             }
-            $cap = max(1, (int) Env::get('NURTURE_DAILY_CAP', 60));
             $dayStart = (new \DateTimeImmutable('today', new \DateTimeZone('America/Sao_Paulo')))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
-            $sentToday = (int) Database::value("SELECT COUNT(*) FROM nurture_broadcast_items WHERE status = 'sent' AND sent_at >= :t", ['t' => $dayStart]);
-            $room = $cap - $sentToday;
-            if ($room <= 0) {
-                return 0;
-            }
-            $items = Database::fetchAll(
-                "SELECT i.*, b.message, s.status AS sub_status FROM nurture_broadcast_items i
-                 JOIN nurture_broadcasts b ON b.id = i.broadcast_id
-                 LEFT JOIN nurture_subscriptions s ON s.id = i.subscription_id
-                 WHERE i.status = 'pending' AND i.attempts < 3 ORDER BY i.id LIMIT " . min(2, $room)
-            );
             $sent = 0;
-            foreach ($items as $it) {
-                if (time() - $started > 45) {
-                    break;
-                }
-                if ($it['sub_status'] === null || $it['sub_status'] === 'unsubscribed') {
-                    Database::query("UPDATE nurture_broadcast_items SET status = 'skipped', error = 'pessoa saiu da lista' WHERE id = :id AND status = 'pending'", ['id' => $it['id']]);
-                    continue;
-                }
-                $claim = Database::query(
-                    "UPDATE nurture_broadcast_items SET attempts = attempts + 1 WHERE id = :id AND status = 'pending' AND attempts = :a",
-                    ['id' => $it['id'], 'a' => $it['attempts']]
-                )->rowCount();
-                if ($claim !== 1) {
-                    continue;
-                }
-                $res = self::sendWhatsapp((string) $it['phone_e164'], self::broadcastText((string) $it['message'], (string) $it['name']));
-                if ($res['ok']) {
-                    Database::query("UPDATE nurture_broadcast_items SET status = 'sent', sent_at = UTC_TIMESTAMP(), error = NULL WHERE id = :id", ['id' => $it['id']]);
-                    $sent++;
-                    sleep(random_int(5, 9));
-                } else {
-                    $final = ((int) $it['attempts'] + 1) >= 3;
-                    Database::query('UPDATE nurture_broadcast_items SET status = :st, error = :e WHERE id = :id', ['id' => $it['id'], 'st' => $final ? 'failed' : 'pending', 'e' => mb_substr((string) $res['error'], 0, 250)]);
-                }
+            if (self::whatsappConfigured()) {
+                $sent += self::sendBroadcastItems('whatsapp', $started, $dayStart);
             }
-            return $sent;
+            return $sent + self::sendBroadcastItems('email', $started, $dayStart);
         } catch (\Throwable $e) {
             Logger::error('Nurture: falha na promoção manual', ['e' => $e->getMessage()]);
             return 0;
         }
+    }
+
+    private static function sendBroadcastItems(string $channel, int $started, string $dayStart): int
+    {
+        $cap = $channel === 'whatsapp' ? max(1, (int) Env::get('NURTURE_DAILY_CAP', 60)) : max(1, (int) Env::get('NURTURE_EMAIL_DAILY_CAP', 150));
+        $perRun = $channel === 'whatsapp' ? 2 : 6;
+        $sentToday = (int) Database::value("SELECT COUNT(*) FROM nurture_broadcast_items WHERE channel = :c AND status = 'sent' AND sent_at >= :t", ['c' => $channel, 't' => $dayStart]);
+        $room = min($perRun, $cap - $sentToday);
+        if ($room <= 0) {
+            return 0;
+        }
+        $items = Database::fetchAll(
+            "SELECT i.*, b.message, b.subject, b.button, s.status AS sub_status, s.email AS sub_email, s.token AS sub_token
+             FROM nurture_broadcast_items i
+             JOIN nurture_broadcasts b ON b.id = i.broadcast_id
+             LEFT JOIN nurture_subscriptions s ON s.id = i.subscription_id
+             WHERE i.status = 'pending' AND i.channel = :c AND i.attempts < 3 ORDER BY i.id LIMIT " . (int) $room,
+            ['c' => $channel]
+        );
+        $sent = 0;
+        foreach ($items as $it) {
+            if (time() - $started > 45) {
+                break;
+            }
+            if ($it['sub_status'] === null || $it['sub_status'] === 'unsubscribed') {
+                Database::query("UPDATE nurture_broadcast_items SET status = 'skipped', error = 'pessoa saiu da lista' WHERE id = :id AND status = 'pending'", ['id' => $it['id']]);
+                continue;
+            }
+            $claim = Database::query(
+                "UPDATE nurture_broadcast_items SET attempts = attempts + 1 WHERE id = :id AND status = 'pending' AND attempts = :a",
+                ['id' => $it['id'], 'a' => $it['attempts']]
+            )->rowCount();
+            if ($claim !== 1) {
+                continue;
+            }
+            if ($channel === 'whatsapp') {
+                $res = self::sendWhatsapp((string) $it['phone_e164'], self::broadcastText((string) $it['message'], (string) $it['name']));
+            } else {
+                $res = self::sendPromoEmail((string) $it['sub_email'], (string) $it['name'], (string) ($it['subject'] ?? ''), (string) $it['message'], (string) ($it['button'] ?? ''), (string) $it['sub_token'], (int) $it['id']);
+            }
+            if ($res['ok']) {
+                Database::query("UPDATE nurture_broadcast_items SET status = 'sent', sent_at = UTC_TIMESTAMP(), error = NULL WHERE id = :id", ['id' => $it['id']]);
+                $sent++;
+                if ($channel === 'whatsapp') {
+                    sleep(random_int(5, 9));
+                }
+            } else {
+                $final = ((int) $it['attempts'] + 1) >= 3;
+                Database::query('UPDATE nurture_broadcast_items SET status = :st, error = :e WHERE id = :id', ['id' => $it['id'], 'st' => $final ? 'failed' : 'pending', 'e' => mb_substr((string) $res['error'], 0, 250)]);
+            }
+        }
+        return $sent;
     }
 
     // ------------------------------------------------------------------ conteúdo

@@ -44,11 +44,11 @@ final class NurtureAdminController extends AdminController
             $counts[$r['status']] = (int) $r['c'];
         }
         $broadcasts = Database::fetchAll(
-            "SELECT b.id, b.created_at, b.message, b.total,
+            "SELECT b.id, b.created_at, b.message, b.total, b.channel, b.subject,
                     COALESCE(SUM(i.status = 'sent'), 0) AS sent, COALESCE(SUM(i.status = 'pending'), 0) AS pending,
                     COALESCE(SUM(i.status IN ('failed','skipped')), 0) AS failed
              FROM nurture_broadcasts b LEFT JOIN nurture_broadcast_items i ON i.broadcast_id = b.id
-             GROUP BY b.id, b.created_at, b.message, b.total ORDER BY b.id DESC LIMIT 6"
+             GROUP BY b.id, b.created_at, b.message, b.total, b.channel, b.subject ORDER BY b.id DESC LIMIT 6"
         );
         $this->view('nurture/index', [
             'broadcasts' => $broadcasts,
@@ -98,24 +98,59 @@ final class NurtureAdminController extends AdminController
         $this->back();
     }
 
-    /** Promoção manual: programa o envio para as pessoas marcadas, ou manda só um teste para um número. */
+    /** Promoção manual (WhatsApp e/ou e-mail): programa o envio para as pessoas marcadas ou manda só um teste. */
     public function broadcast(Request $request): void
     {
         $message = trim(str_replace("\r", '', (string) ($request->post['message'] ?? '')));
         $message = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $message) ?? '';
         $action = (string) ($request->post['action'] ?? 'send');
+        $channel = (string) ($request->post['channel'] ?? 'whatsapp');
+        $channel = in_array($channel, ['whatsapp', 'email', 'both'], true) ? $channel : 'whatsapp';
+        $subject = trim(preg_replace('/[\x00-\x1F]+/', ' ', (string) ($request->post['subject'] ?? '')) ?? '');
+        $button = trim(preg_replace('/[\x00-\x1F]+/', ' ', (string) ($request->post['button'] ?? '')) ?? '');
+        $wantsEmail = $channel !== 'whatsapp';
+        $wantsWa = $channel !== 'email';
+
         if (mb_strlen($message) < 10 || mb_strlen($message) > 1000) {
             flash('error', 'Escreva a mensagem (de 10 a 1000 caracteres).');
             $this->back();
         }
+        if ($wantsEmail && (mb_strlen($subject) < 3 || mb_strlen($subject) > 120)) {
+            flash('error', 'Escreva o assunto do e-mail (de 3 a 120 caracteres).');
+            $this->back();
+        }
+        if (mb_strlen($button) > 40) {
+            $button = mb_substr($button, 0, 40);
+        }
 
         if ($action === 'test') {
-            $digits = preg_replace('/\D+/', '', (string) ($request->post['test_phone'] ?? '')) ?? '';
-            if ($digits !== '' && strlen($digits) <= 11) {
-                $digits = '55' . $digits;
+            $done = [];
+            $errors = [];
+            if ($wantsWa) {
+                $digits = preg_replace('/\D+/', '', (string) ($request->post['test_phone'] ?? '')) ?? '';
+                if ($digits !== '') {
+                    $digits = strlen($digits) <= 11 ? '55' . $digits : $digits;
+                    $res = \App\Services\NurtureService::sendWhatsapp($digits, \App\Services\NurtureService::broadcastText($message, 'Maria Silva'));
+                    $res['ok'] ? $done[] = 'WhatsApp' : $errors[] = 'WhatsApp: ' . (string) $res['error'];
+                }
             }
-            $res = \App\Services\NurtureService::sendWhatsapp($digits, \App\Services\NurtureService::broadcastText($message, 'Maria Silva'));
-            flash($res['ok'] ? 'success' : 'error', $res['ok'] ? 'Teste enviado (com o nome "Maria").' : 'Falha ao enviar o teste: ' . (string) $res['error']);
+            if ($wantsEmail) {
+                $to = trim((string) ($request->post['test_email'] ?? ''));
+                if ($to !== '') {
+                    $res = filter_var($to, FILTER_VALIDATE_EMAIL)
+                        ? \App\Services\NurtureService::sendPromoEmail($to, 'Maria Silva', '[TESTE] ' . $subject, $message, $button, str_repeat('0', 40), null, 'nurture-broadcast-test')
+                        : ['ok' => false, 'error' => 'e-mail inválido'];
+                    $res['ok'] ? $done[] = 'e-mail' : $errors[] = 'e-mail: ' . (string) $res['error'];
+                }
+            }
+            if (!$done && !$errors) {
+                $errors[] = 'informe o número e/ou o e-mail para o teste';
+            }
+            if ($errors) {
+                flash('error', 'Falha no teste: ' . implode('; ', $errors) . ($done ? ' (enviado por ' . implode(' e ', $done) . ')' : ''));
+            } else {
+                flash('success', 'Teste enviado por ' . implode(' e ', $done) . ' (com o nome "Maria").');
+            }
             $this->back();
         }
 
@@ -128,11 +163,11 @@ final class NurtureAdminController extends AdminController
             flash('error', 'Escolha no máximo 200 pessoas por promoção.');
             $this->back();
         }
-        $r = \App\Services\NurtureService::queueBroadcast($message, $ids);
-        audit('nurture_broadcast', 'nurture', $r['broadcast'], ['queued' => $r['queued'], 'skipped' => $r['skipped']]);
-        flash($r['queued'] ? 'success' : 'error', $r['queued']
-            ? "Promoção programada para {$r['queued']} pessoa(s)" . ($r['skipped'] ? " ({$r['skipped']} ignorada(s): saíram da lista ou sem telefone)" : '') . '. As mensagens saem aos poucos, das 9h às 20h.'
-            : 'Nenhuma das pessoas marcadas pode receber (saíram da lista ou estão sem telefone).');
+        $r = \App\Services\NurtureService::queueBroadcast($message, $ids, $channel, $subject, $button);
+        audit('nurture_broadcast', 'nurture', $r['broadcast'], ['people' => $r['people'], 'queued' => $r['queued'], 'channel' => $channel]);
+        flash($r['people'] ? 'success' : 'error', $r['people']
+            ? "Promoção programada para {$r['people']} pessoa(s)" . ($r['skipped'] ? " ({$r['skipped']} ignorada(s): saíram da lista ou sem contato)" : '') . '. As mensagens saem aos poucos, das 9h às 20h.'
+            : 'Nenhuma das pessoas marcadas pode receber (saíram da lista ou estão sem contato).');
         $this->back();
     }
 

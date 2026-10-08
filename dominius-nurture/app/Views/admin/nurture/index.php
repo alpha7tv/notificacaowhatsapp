@@ -89,24 +89,41 @@ $mini = 'padding:6px 10px;font-size:.78rem;border-radius:8px;border:1px solid rg
     Mostrando até 300 registros mais recentes.
   </p>
   <div id="promo" style="<?= $box ?>padding:22px;margin:22px 0 0">
-    <h3 style="margin:0 0 4px">Enviar promoção por WhatsApp</h3>
-    <p class="muted" style="margin:0 0 14px">Marque as pessoas na lista acima (<strong id="sel-count">0 selecionadas</strong>), escreva a mensagem e envie. Só vão receber quem aceitou receber ofertas e não saiu da lista.</p>
+    <h3 style="margin:0 0 4px">Enviar promoção</h3>
+    <p class="muted" style="margin:0 0 14px">Marque as pessoas na lista acima (<strong id="sel-count">0 selecionadas</strong>), escolha o canal, escreva a mensagem e envie. Só recebem quem aceitou receber ofertas e não saiu da lista.</p>
     <?php if (!$waReady): ?><p style="color:#FF4D6D;margin:0 0 12px">O WhatsApp ainda não está configurado. Veja a página WhatsApp no menu.</p><?php endif; ?>
     <form method="post" action="/admin/sequencia/promocao" id="bulk-form">
       <?= csrf_field() ?>
+      <div style="margin:0 0 14px;display:flex;gap:18px;flex-wrap:wrap" role="radiogroup" aria-label="Canal de envio">
+        <label style="cursor:pointer"><input type="radio" name="channel" value="whatsapp" checked> WhatsApp</label>
+        <label style="cursor:pointer"><input type="radio" name="channel" value="email"> E-mail</label>
+        <label style="cursor:pointer"><input type="radio" name="channel" value="both"> WhatsApp e e-mail</label>
+      </div>
+      <div class="field" id="promo-subject-box" style="margin:0 0 12px;display:none">
+        <label for="promo-subject" style="display:block;margin-bottom:6px">Assunto do e-mail</label>
+        <input class="input" id="promo-subject" name="subject" maxlength="120" placeholder="Ex.: {first}, condição especial para quem testou" style="display:block;width:100%;box-sizing:border-box">
+      </div>
       <div class="field" style="margin:0 0 12px">
         <label for="promo-msg" style="display:block;margin-bottom:6px">Mensagem</label>
         <textarea class="textarea" id="promo-msg" name="message" rows="7" style="display:block;width:100%;box-sizing:border-box" maxlength="1000" placeholder="Oi, {first}! Aqui é o {sender}. Hoje liberei uma condição especial para quem já testou com a gente: ..." required></textarea>
-        <span class="hint">Use <code>{first}</code> para o primeiro nome e <code>{sender}</code> para o seu nome. O aviso "se não quiser receber, é só avisar" é adicionado no final. Evite links (aumentam o risco de bloqueio do número).</span>
+        <span class="hint">No e-mail o texto vira uma página bonita (use *palavra* para negrito). Use <code>{first}</code> para o primeiro nome e <code>{sender}</code> para o seu nome. O aviso "se não quiser receber, é só avisar" é adicionado no final. Evite links (aumentam o risco de bloqueio do número).</span>
+      </div>
+      <div class="field" id="promo-button-box" style="margin:0 0 12px;display:none">
+        <label for="promo-button" style="display:block;margin-bottom:6px">Texto do botão do e-mail (opcional)</label>
+        <input class="input" id="promo-button" name="button" maxlength="40" placeholder="Falar no WhatsApp" style="display:block;width:100%;box-sizing:border-box;max-width:360px">
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
         <button class="btn btn-primary" type="submit" name="action" value="send" onclick="return confirm('Programar esta promoção para as pessoas marcadas?');">Enviar para as marcadas</button>
         <span class="muted" style="font-size:.85rem">Saem aos poucos, das 9h às 20h, até <?= (int) $dailyCap ?> por dia.</span>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,.1)">
-        <div class="field" style="margin:0;min-width:220px">
-          <label for="promo-test">Testar antes no meu número</label>
+        <div class="field" style="margin:0;min-width:200px" id="test-phone-box">
+          <label for="promo-test">Testar no meu WhatsApp</label>
           <input class="input" id="promo-test" name="test_phone" type="tel" placeholder="14 98888-7777" maxlength="30">
+        </div>
+        <div class="field" style="margin:0;min-width:220px;display:none" id="test-email-box">
+          <label for="promo-test-email">Testar no meu e-mail</label>
+          <input class="input" id="promo-test-email" name="test_email" type="email" placeholder="voce@email.com" maxlength="190">
         </div>
         <button class="btn" type="submit" name="action" value="test" formnovalidate>Enviar só um teste</button>
       </div>
@@ -122,6 +139,7 @@ $mini = 'padding:6px 10px;font-size:.78rem;border-radius:8px;border:1px solid rg
         <strong><?= (int) $b['sent'] ?></strong> enviadas de <?= (int) $b['total'] ?>
         <?php if ((int) $b['pending'] > 0): ?>· <?= (int) $b['pending'] ?> na fila<?php endif; ?>
         <?php if ((int) $b['failed'] > 0): ?>· <span style="color:#FF4D6D"><?= (int) $b['failed'] ?> não enviadas</span><?php endif; ?><br>
+        <span class="muted" style="font-size:.8rem;text-transform:uppercase;letter-spacing:.04em"><?= e(['whatsapp' => 'WhatsApp', 'email' => 'E-mail', 'both' => 'WhatsApp + e-mail'][$b['channel'] ?? 'whatsapp'] ?? 'WhatsApp') ?></span><br>
         <span class="muted"><?= e(mb_substr((string) $b['message'], 0, 110)) ?><?= mb_strlen((string) $b['message']) > 110 ? '…' : '' ?></span>
       </div>
     <?php endforeach; ?>
@@ -136,6 +154,18 @@ $mini = 'padding:6px 10px;font-size:.78rem;border-radius:8px;border:1px solid rg
     if (all) all.addEventListener('change', function () { rows().forEach(function (c) { c.checked = all.checked; }); refresh(); });
     rows().forEach(function (c) { c.addEventListener('change', refresh); });
     refresh();
+    // mostra os campos de e-mail só quando o canal pede
+    function channel() { var r = document.querySelector('input[name="channel"]:checked'); return r ? r.value : 'whatsapp'; }
+    function layout() {
+      var c = channel(), mail = c !== 'whatsapp', wa = c !== 'email';
+      document.getElementById('promo-subject-box').style.display = mail ? 'block' : 'none';
+      document.getElementById('promo-button-box').style.display = mail ? 'block' : 'none';
+      document.getElementById('test-email-box').style.display = mail ? 'block' : 'none';
+      document.getElementById('test-phone-box').style.display = wa ? 'block' : 'none';
+      document.getElementById('promo-subject').required = mail;
+    }
+    document.querySelectorAll('input[name="channel"]').forEach(function (r) { r.addEventListener('change', layout); });
+    layout();
   })();
   </script>
 </div>

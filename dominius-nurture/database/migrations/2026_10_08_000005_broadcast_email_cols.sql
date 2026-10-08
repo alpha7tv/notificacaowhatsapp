@@ -1,0 +1,1 @@
+ALTER TABLE nurture_broadcasts ADD COLUMN subject VARCHAR(190) NULL, ADD COLUMN button VARCHAR(60) NULL, ADD COLUMN channel VARCHAR(10) NOT NULL DEFAULT 'whatsapp';
