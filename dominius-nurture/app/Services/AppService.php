@@ -48,7 +48,6 @@ final class AppService
             'expired_title' => ['Título quando o acesso vence', 'Seu acesso venceu'],
             'expired_message' => ['Mensagem quando o acesso vence', 'Renove o seu acesso com o seu fornecedor para voltar a assistir.'],
             'downloader_code' => ['Código do Downloader (opcional, para TV)', ''],
-            'max_devices' => ['Aparelhos por cliente (padrão)', '2'],
         ];
     }
 
@@ -173,12 +172,6 @@ final class AppService
     private static function bindDevice(array $client, string $deviceKey, string $model, string $appVersion, string $ip): array
     {
         $dev = Database::fetch('SELECT * FROM app_devices WHERE client_id = :c AND device_key = :d', ['c' => $client['id'], 'd' => $deviceKey]);
-        if (!$dev) {
-            $count = (int) Database::value('SELECT COUNT(*) FROM app_devices WHERE client_id = :c', ['c' => $client['id']]);
-            if ($count >= (int) $client['max_devices']) {
-                return ['ok' => false, 'error' => 'device_limit', 'message' => 'Limite de aparelhos atingido para este código. Fale com o seu fornecedor para liberar.'];
-            }
-        }
         $token = bin2hex(random_bytes(24));
         $fields = [
             'token_hash' => hash('sha256', $token),

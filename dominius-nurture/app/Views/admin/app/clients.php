@@ -25,7 +25,7 @@
           <td style="<?= $td ?>"><?= e((string) $r['username']) ?></td>
           <td style="<?= $td ?>"><?= $r['is_trial'] ? 'Teste' : 'Cliente' ?><?= $r['status'] === 'blocked' ? ' · <span style="color:#FF4D6D">bloqueado</span>' : '' ?></td>
           <td style="<?= $td ?>white-space:nowrap;<?= $expired ? 'color:#FF4D6D' : '' ?>"><?= $r['expires_at'] ? e(dt($r['expires_at'])) : 'sem vencimento' ?></td>
-          <td style="<?= $td ?>"><?= (int) $r['devices'] ?>/<?= (int) $r['max_devices'] ?></td>
+          <td style="<?= $td ?>"><?= (int) $r['devices'] ?></td>
           <td style="<?= $td ?>white-space:nowrap"><?= $r['last_seen_at'] ? e(dt($r['last_seen_at'])) : '—' ?></td>
           <td style="<?= $td ?>"><a style="<?= $mini ?>" href="/admin/meu-app/clientes/<?= (int) $r['id'] ?>">Abrir</a></td>
         </tr>

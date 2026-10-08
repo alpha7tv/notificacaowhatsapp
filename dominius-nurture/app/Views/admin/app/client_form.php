@@ -22,7 +22,6 @@ $expires = \App\Controllers\Admin\AppAdminController::utcToLocal($c['expires_at'
       <div><label style="<?= $lbl ?>" for="f-user">Usuário da lista</label><input class="input" style="<?= $fld ?>" id="f-user" name="username" maxlength="120" autocomplete="off" value="<?= e($c['username'] ?? '') ?>"></div>
       <div><label style="<?= $lbl ?>" for="f-pass">Senha da lista<?= $client ? ' (deixe em branco para manter)' : '' ?></label><input class="input" style="<?= $fld ?>" id="f-pass" name="password" maxlength="120" autocomplete="new-password"></div>
       <div><label style="<?= $lbl ?>" for="f-exp">Vencimento (horário de Brasília)</label><input class="input" style="<?= $fld ?>" id="f-exp" name="expires" type="datetime-local" value="<?= e($expires) ?>"></div>
-      <div><label style="<?= $lbl ?>" for="f-max">Aparelhos permitidos</label><input class="input" style="<?= $fld ?>" id="f-max" name="max_devices" type="number" min="1" max="10" value="<?= (int) ($c['max_devices'] ?? 2) ?>"></div>
     </div>
     <div style="display:flex;gap:22px;flex-wrap:wrap;margin:16px 0">
       <label><input type="checkbox" name="is_trial" value="1"<?= !empty($c['is_trial']) ? ' checked' : '' ?>> É um teste</label>
@@ -35,7 +34,7 @@ $expires = \App\Controllers\Admin\AppAdminController::utcToLocal($c['expires_at'
 
   <?php if ($client): ?>
   <div style="<?= $box ?>padding:18px 22px;margin:18px 0 0">
-    <h3 style="margin:0 0 10px">Aparelhos (<?= count($devices) ?>/<?= (int) $c['max_devices'] ?>)</h3>
+    <h3 style="margin:0 0 10px">Aparelhos (<?= count($devices) ?>)</h3>
     <?php if (!$devices): ?><p class="muted" style="margin:0">Nenhum aparelho ativou este código ainda.</p><?php endif; ?>
     <?php foreach ($devices as $d): ?>
       <div style="padding:8px 0;border-top:1px solid rgba(255,255,255,.08);font-size:.9rem"><strong><?= e($d['model'] ?: 'Aparelho') ?></strong> · app <?= e((string) $d['app_version']) ?> · último acesso <?= e(dt($d['last_seen_at'])) ?></div>
