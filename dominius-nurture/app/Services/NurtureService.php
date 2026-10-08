@@ -54,8 +54,8 @@ final class NurtureService
                 return;
             }
             Database::query(
-                "INSERT IGNORE INTO nurture_subscriptions (test_request_id, name, email, phone_e164, token, step, next_send_at, status, consent_at, created_at)
-                 VALUES (:t, :n, :e, :p, :k, 0, :ns, 'active', :c, UTC_TIMESTAMP())",
+                "INSERT IGNORE INTO nurture_subscriptions (test_request_id, name, email, phone_e164, token, step, next_send_at, followup_at, status, consent_at, created_at)
+                 VALUES (:t, :n, :e, :p, :k, 0, :ns, :fu, 'active', :c, UTC_TIMESTAMP())",
                 [
                     't' => $testRequestId,
                     'n' => $req['name'],
@@ -63,6 +63,7 @@ final class NurtureService
                     'p' => $req['phone_e164'],
                     'k' => bin2hex(random_bytes(20)),
                     'ns' => gmdate('Y-m-d H:i:s', time() + self::INTERVAL_DAYS * 86400),
+                    'fu' => gmdate('Y-m-d H:i:s', self::nextWindow(time() + self::followupHours() * 3600)),
                     'c' => $req['marketing_consent_at'],
                 ]
             );
@@ -105,6 +106,41 @@ final class NurtureService
                         sleep(random_int(3, 6));
                     } else {
                         Database::query('UPDATE nurture_subscriptions SET last_error = :e WHERE id = :id', ['id' => $row['id'], 'e' => mb_substr('whatsapp: ' . (string) $res['error'], 0, 250)]);
+                    }
+                }
+            }
+
+            // 1b) Acompanhamento de WhatsApp quando o teste acaba (só em horário comercial)
+            if (self::whatsappConfigured()) {
+                $fu = Database::fetchAll(
+                    "SELECT * FROM nurture_subscriptions WHERE status = 'active' AND followup_sent_at IS NULL AND followup_at IS NOT NULL
+                       AND followup_at <= UTC_TIMESTAMP() AND followup_attempts < 3 AND whatsapp_sent_at IS NOT NULL AND phone_e164 IS NOT NULL
+                     ORDER BY followup_at LIMIT 10"
+                );
+                foreach ($fu as $row) {
+                    if (time() - $started > 40) {
+                        break;
+                    }
+                    $nextOk = self::nextWindow(time());
+                    if ($nextOk > time() + 60) {
+                        // fora do horário: empurra para a próxima janela
+                        Database::query('UPDATE nurture_subscriptions SET followup_at = :t WHERE id = :id AND followup_sent_at IS NULL', ['id' => $row['id'], 't' => gmdate('Y-m-d H:i:s', $nextOk)]);
+                        continue;
+                    }
+                    $claim = Database::query(
+                        'UPDATE nurture_subscriptions SET followup_attempts = followup_attempts + 1 WHERE id = :id AND followup_sent_at IS NULL AND followup_attempts = :a',
+                        ['id' => $row['id'], 'a' => $row['followup_attempts']]
+                    )->rowCount();
+                    if ($claim !== 1) {
+                        continue;
+                    }
+                    $res = self::sendWhatsapp((string) $row['phone_e164'], self::followupText($row));
+                    if ($res['ok']) {
+                        Database::query('UPDATE nurture_subscriptions SET followup_sent_at = UTC_TIMESTAMP(), last_error = NULL WHERE id = :id', ['id' => $row['id']]);
+                        $count++;
+                        sleep(random_int(3, 6));
+                    } else {
+                        Database::query('UPDATE nurture_subscriptions SET last_error = :e WHERE id = :id', ['id' => $row['id'], 'e' => mb_substr('acompanhamento: ' . (string) $res['error'], 0, 250)]);
                     }
                 }
             }
@@ -216,11 +252,63 @@ final class NurtureService
             return null;
         }
         Database::query(
-            "UPDATE nurture_subscriptions SET status = 'unsubscribed', unsubscribed_at = UTC_TIMESTAMP(), next_send_at = NULL, updated_at = UTC_TIMESTAMP()
+            "UPDATE nurture_subscriptions SET status = 'unsubscribed', unsubscribed_at = UTC_TIMESTAMP(), next_send_at = NULL, followup_at = NULL, updated_at = UTC_TIMESTAMP()
              WHERE id = :id AND status = 'active'",
             ['id' => $sub['id']]
         );
         return $sub;
+    }
+
+    // ------------------------------------------------------------------ acompanhamento (WhatsApp)
+
+    public static function followupHours(): int
+    {
+        return max(1, (int) Env::get('NURTURE_FOLLOWUP_HOURS', 4));
+    }
+
+    /** Menor instante >= $ts dentro da janela de envio (horário de Brasília, padrão 9h às 20h). */
+    public static function nextWindow(int $ts): int
+    {
+        $start = max(0, min(23, (int) Env::get('NURTURE_WINDOW_START', 9)));
+        $end = max($start + 1, min(24, (int) Env::get('NURTURE_WINDOW_END', 20)));
+        $tz = new \DateTimeZone('America/Sao_Paulo');
+        $d = (new \DateTimeImmutable('@' . $ts))->setTimezone($tz);
+        $h = (int) $d->format('G');
+        if ($h >= $start && $h < $end) {
+            return $ts;
+        }
+        $target = $h < $start ? $d : $d->modify('+1 day');
+        // abre a janela com uma folga aleatória, para não disparar tudo no mesmo minuto
+        return $target->setTime($start, random_int(0, 25), 0)->getTimestamp();
+    }
+
+    /** Texto do acompanhamento, com a variação escolhida pelo id (ou a pedida em $variant). */
+    public static function followupText(array $row, ?int $variant = null): string
+    {
+        $cfg = (array) require dirname(__DIR__, 2) . '/config/nurture_whatsapp.php';
+        $list = $cfg['followups'];
+        $i = $variant !== null ? max(0, min(count($list) - 1, $variant)) : ((int) ($row['id'] ?? 0)) % count($list);
+        $prepago = self::plans('prepago');
+        $tr = [
+            '{first}' => explode(' ', trim((string) ($row['name'] ?? '')))[0],
+            '{sender}' => (string) Env::get('NURTURE_SENDER_NAME', 'Carlos'),
+            '{site}' => (string) setting('site_name', 'Dominius Play'),
+            '{hours}' => (string) self::followupHours(),
+            '{prepago_min}' => $prepago ? money($prepago[0]['price']) : 'um valor baixo',
+        ];
+        return strtr($list[$i], $tr) . (string) ($cfg['optout'] ?? '');
+    }
+
+    /** Descadastra por e-mail ou telefone (para quem pediu para sair pelo WhatsApp). */
+    public static function stop(string $who): int
+    {
+        $who = trim($who);
+        $digits = preg_replace('/\D+/', '', $who) ?? '';
+        return Database::query(
+            "UPDATE nurture_subscriptions SET status = 'unsubscribed', unsubscribed_at = UTC_TIMESTAMP(), next_send_at = NULL, followup_at = NULL, updated_at = UTC_TIMESTAMP()
+             WHERE status = 'active' AND (LOWER(email) = :e OR (:d <> '' AND REPLACE(phone_e164, '+', '') LIKE :dl))",
+            ['e' => mb_strtolower($who), 'd' => $digits, 'dl' => '%' . $digits]
+        )->rowCount();
     }
 
     // ------------------------------------------------------------------ conteúdo

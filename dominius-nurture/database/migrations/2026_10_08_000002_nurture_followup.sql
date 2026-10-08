@@ -1,0 +1,1 @@
+ALTER TABLE nurture_subscriptions ADD COLUMN followup_at DATETIME NULL, ADD COLUMN followup_sent_at DATETIME NULL, ADD COLUMN followup_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0;

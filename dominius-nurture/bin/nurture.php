@@ -8,6 +8,8 @@ declare(strict_types=1);
  *   php bin/nurture.php whatsapp <telefone>        envia a mensagem de entrada para o telefone
  *   php bin/nurture.php next <email>               adianta o próximo e-mail de uma inscrição para agora
  *   php bin/nurture.php list                       últimas inscrições
+ *   php bin/nurture.php followup <telefone> [1-3]    envia o texto do acompanhamento de 4h (sem gravar nada)
+ *   php bin/nurture.php stop <email|telefone>        tira a pessoa da sequência (pedido de saída)
  *   php bin/nurture.php testmail <email>           envia um exemplo do e-mail "Seu teste está pronto" (dados fictícios)
  */
 
@@ -56,6 +58,19 @@ switch ($cmd) {
         $email = mb_strtolower((string) ($argv[2] ?? ''));
         $n = Database::query("UPDATE nurture_subscriptions SET next_send_at = UTC_TIMESTAMP() WHERE email = :e AND status = 'active'", ['e' => $email])->rowCount();
         echo $n ? "Próximo e-mail de {$email} será enviado no próximo ciclo do worker (até 1 min).\n" : "Nenhuma inscrição ativa para {$email}.\n";
+        break;
+
+    case 'followup':
+        $phone = (string) ($argv[2] ?? '');
+        $variant = isset($argv[3]) ? max(1, (int) $argv[3]) - 1 : 0;
+        $text = NurtureService::followupText(['name' => 'Maria Silva', 'id' => 0], $variant);
+        $res = NurtureService::sendWhatsapp($phone, $text);
+        echo $res['ok'] ? "Acompanhamento (variação " . ($variant + 1) . ") enviado\n" : 'ERRO: ' . ($res['error'] ?? '?') . PHP_EOL;
+        break;
+
+    case 'stop':
+        $n = NurtureService::stop((string) ($argv[2] ?? ''));
+        echo $n ? "{$n} inscrição(ões) encerrada(s).\n" : "Nenhuma inscrição ativa encontrada.\n";
         break;
 
     case 'testmail':
