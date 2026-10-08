@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS nurture_subscriptions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  test_request_id INT UNSIGNED NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  email VARCHAR(190) NOT NULL,
+  phone_e164 VARCHAR(20) NULL,
+  token CHAR(40) NOT NULL,
+  step TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  next_send_at DATETIME NULL,
+  status ENUM('active','completed','unsubscribed','converted') NOT NULL DEFAULT 'active',
+  whatsapp_sent_at DATETIME NULL,
+  wa_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  mail_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  consent_at DATETIME NULL,
+  unsubscribed_at DATETIME NULL,
+  last_error VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NULL,
+  UNIQUE KEY uq_nurture_test (test_request_id),
+  UNIQUE KEY uq_nurture_token (token),
+  KEY idx_nurture_due (status, next_send_at),
+  KEY idx_nurture_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
