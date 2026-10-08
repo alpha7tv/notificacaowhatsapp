@@ -3,8 +3,8 @@
 # Uso: bash diagnostico-licenca.sh email-do-cliente@exemplo.com
 set -u
 EMAIL="${1:-}"
-[ -n "$EMAIL" ] || { echo "Uso: bash $0 email-do-cliente"; exit 1; }
-[[ "$EMAIL" =~ ^[A-Za-z0-9._%+@-]+$ ]] || { echo "E-mail inválido (use só letras, números e . _ % + - @)."; exit 1; }
+EMAIL="${EMAIL:-ultimos}"
+[[ "$EMAIL" == "ultimos" || "$EMAIL" =~ ^[A-Za-z0-9._%+@-]+$ ]] || { echo "E-mail inválido (use só letras, números e . _ % + - @)."; exit 1; }
 
 echo "== 1. Localizando o WHMCS =="
 CFG=""
@@ -26,6 +26,22 @@ q() { mysql -h "$DBH" -u "$DBU" "$DBN" -t -e "$1" 2>&1 | sed -E 's/(pass(word)?|
 echo; echo "== 2. Módulos instalados relacionados (nome contém midia/media/studio/licen) =="
 ls "$ROOT/modules/servers" "$ROOT/modules/addons" "$ROOT/modules/provisioning" 2>/dev/null | grep -i -E 'midia|media|studio|licen' || echo "(nenhum com esses nomes)"
 echo "Hooks relacionados:"; grep -ril -E 'midia|studio' "$ROOT/includes/hooks" 2>/dev/null | head || true
+
+if [ "$EMAIL" = "ultimos" ]; then
+  echo; echo "== Últimos 10 pedidos (com o e-mail do cliente) =="
+  q "SELECT o.id AS pedido, o.date, o.status, o.paymentstatus AS pagto, o.invoiceid AS fatura, c.email FROM tblorders o JOIN tblclients c ON c.id=o.userid ORDER BY o.id DESC LIMIT 10"
+  echo; echo "== Últimos 10 serviços =="
+  q "SELECT h.id, h.regdate, p.name AS produto, p.servertype AS modulo, p.autosetup, h.domainstatus AS status, c.email FROM tblhosting h JOIN tblproducts p ON p.id=h.packageid JOIN tblclients c ON c.id=h.userid ORDER BY h.id DESC LIMIT 10"
+  echo; echo "== Produtos com módulo Mídia Studio/licença =="
+  q "SELECT id, name, servertype AS modulo, autosetup FROM tblproducts WHERE servertype LIKE '%midia%' OR servertype LIKE '%licens%' OR name LIKE '%Studio%' OR name LIKE '%Licen%'"
+  echo; echo "== Log do módulo (últimas 12 chamadas) =="
+  q "SELECT date, module, action, LEFT(request,200) AS request, LEFT(response,300) AS response FROM tblmodulelog ORDER BY id DESC LIMIT 12"
+  echo; echo "== Cron do WHMCS =="
+  q "SELECT setting, value FROM tblconfiguration WHERE setting LIKE '%Cron%' LIMIT 10"
+  date -u '+Agora (UTC): %F %T'
+  echo; echo "Fim. Copie esta saída e me envie."
+  exit 0
+fi
 
 echo; echo "== 3. Cliente =="
 q "SELECT id, firstname, lastname, email, status FROM tblclients WHERE email='$EMAIL'"
