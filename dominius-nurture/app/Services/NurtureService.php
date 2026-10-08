@@ -264,7 +264,24 @@ final class NurtureService
         if ($code === 200 || $code === 201) {
             return ['ok' => true, 'error' => null];
         }
-        return ['ok' => false, 'error' => 'HTTP ' . $code];
+        return ['ok' => false, 'error' => self::whatsappError($code, (string) $body)];
+    }
+
+    /** Traduz a recusa da Evolution em uma mensagem útil (sem expor dados sensíveis). */
+    private static function whatsappError(int $code, string $body): string
+    {
+        $j = json_decode($body, true);
+        $msg = is_array($j) ? ($j['response']['message'] ?? $j['message'] ?? null) : null;
+        if (is_array($msg)) {
+            foreach ($msg as $m) {
+                if (is_array($m) && array_key_exists('exists', $m) && $m['exists'] === false) {
+                    return 'este número não tem WhatsApp (confira o DDI e o DDD)';
+                }
+            }
+            $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+        }
+        $msg = is_string($msg) ? trim($msg) : '';
+        return 'HTTP ' . $code . ($msg !== '' ? ': ' . mb_substr($msg, 0, 160) : '');
     }
 
     private static function emailData(array $row, int $idx): array

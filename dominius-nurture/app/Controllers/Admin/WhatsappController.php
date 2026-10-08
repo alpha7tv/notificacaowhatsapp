@@ -52,7 +52,12 @@ final class WhatsappController extends AdminController
             flash('error', 'O WhatsApp não está conectado. Escaneie o QR code primeiro.');
             redirect('/admin/configuracoes/whatsapp');
         }
-        $res = NurtureService::sendWhatsapp($phone, 'Teste do painel Dominius Play: a conexão do WhatsApp está funcionando. ✅');
+        // O painel é usado no Brasil: sem DDI (até 11 dígitos), completa com 55.
+        $digits = preg_replace('/\D+/', '', $phone) ?? '';
+        if ($digits !== '' && strlen($digits) <= 11) {
+            $digits = '55' . $digits;
+        }
+        $res = NurtureService::sendWhatsapp($digits, 'Teste do painel Dominius Play: a conexão do WhatsApp está funcionando. ✅');
         audit('whatsapp_test');
         flash($res['ok'] ? 'success' : 'error', $res['ok'] ? 'Mensagem de teste enviada.' : 'Falha ao enviar: ' . (string) $res['error']);
         redirect('/admin/configuracoes/whatsapp');
