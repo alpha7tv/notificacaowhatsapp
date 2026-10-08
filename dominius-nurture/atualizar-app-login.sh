@@ -36,7 +36,6 @@ new = find + "\n$router->post('/api/app/entrar', [\\App\\Controllers\\AppApiCont
 open(p, 'w', encoding='utf-8').write(s.replace(find, new, 1))
 print('[alterado] routes/web.php')
 PY
-chown : routes/web.php 2>/dev/null || true
 sudo -u $OWNER php -l routes/web.php >/dev/null || { echo "ERRO: restaurando routes/web.php"; cp -a "$BK/routes/web.php" routes/web.php; exit 1; }
 echo "== 4/4 Recarregando =="
 systemctl reload php8.1-fpm
