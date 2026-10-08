@@ -29,7 +29,7 @@ echo "Hooks relacionados:"; grep -ril -E 'midia|studio' "$ROOT/includes/hooks" 2
 
 if [ "$EMAIL" = "ultimos" ]; then
   echo; echo "== Últimos 10 pedidos (com o e-mail do cliente) =="
-  q "SELECT o.id AS pedido, o.date, o.status, o.paymentstatus AS pagto, o.invoiceid AS fatura, c.email FROM tblorders o JOIN tblclients c ON c.id=o.userid ORDER BY o.id DESC LIMIT 10"
+  q "SELECT o.id AS pedido, o.date, o.status, o.transstatus AS pagto, o.invoiceid AS fatura, c.email FROM tblorders o JOIN tblclients c ON c.id=o.userid ORDER BY o.id DESC LIMIT 10"
   echo; echo "== Últimos 10 serviços =="
   q "SELECT h.id, h.regdate, p.name AS produto, p.servertype AS modulo, p.autosetup, h.domainstatus AS status, c.email FROM tblhosting h JOIN tblproducts p ON p.id=h.packageid JOIN tblclients c ON c.id=h.userid ORDER BY h.id DESC LIMIT 10"
   echo; echo "== Produtos com módulo Mídia Studio/licença =="
@@ -67,4 +67,11 @@ echo; echo "== 9. Cron do WHMCS =="
 q "SELECT setting, value FROM tblconfiguration WHERE setting IN ('LastCronInvocationTime','CronLastRun','CronRunning') OR setting LIKE '%Cron%' LIMIT 10"
 date -u '+Agora (UTC): %F %T'
 crontab -l 2>/dev/null | grep -i whmcs || echo "(sem cron whmcs no crontab do usuário atual; pode estar em /etc/cron.d)"; grep -ril whmcs /etc/cron.d 2>/dev/null | head -3
+echo; echo "== 10. Módulo midiaradiostudio (arquivos e funções) =="
+M="$ROOT/modules/servers/midiaradiostudio"
+ls -la "$M" 2>&1 | head -20
+grep -n "function " "$M"/*.php 2>/dev/null | cut -c1-160 | head -40
+echo; echo "== 11. Pedidos/serviços/produtos: detalhes do serviço pendente =="
+q "SELECT h.id, h.orderid, h.domainstatus, h.paymentmethod, h.packageid, h.server, h.username, LEFT(h.notes,200) AS notas FROM tblhosting h WHERE h.userid=$UID_ ORDER BY h.id DESC LIMIT 3"
+q "SELECT id, ordernum, status, transstatus, invoiceid, fraudmodule, LEFT(fraudoutput,120) AS fraude FROM tblorders WHERE userid=$UID_ ORDER BY id DESC LIMIT 3"
 echo; echo "Fim. Copie esta saída (já sem senhas) e me envie."
