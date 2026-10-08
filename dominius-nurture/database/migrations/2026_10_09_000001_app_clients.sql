@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS app_clients (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(150) NOT NULL,
+  email VARCHAR(190) NULL,
+  phone VARCHAR(30) NULL,
+  code CHAR(8) NOT NULL,
+  server_url VARCHAR(255) NULL,
+  username VARCHAR(120) NULL,
+  password_enc TEXT NULL,
+  expires_at DATETIME NULL,
+  is_trial TINYINT(1) NOT NULL DEFAULT 0,
+  status VARCHAR(10) NOT NULL DEFAULT 'active',
+  max_devices TINYINT UNSIGNED NOT NULL DEFAULT 2,
+  test_request_id INT UNSIGNED NULL,
+  notes TEXT NULL,
+  last_seen_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NULL,
+  UNIQUE KEY uq_app_client_code (code),
+  UNIQUE KEY uq_app_client_test (test_request_id),
+  KEY idx_app_client_status (status, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

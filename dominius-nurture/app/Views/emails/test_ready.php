@@ -3,6 +3,7 @@
  * E-mail "Seu teste está pronto": dados de acesso + listas (M3U/HLS/SSIPTV) + aplicativos e instruções.
  * @var string $name @var array $result @var bool $hasCredentials
  */
+$app = $app ?? null; // ['code' => ..., 'url' => ..., 'downloader' => ...] quando o app já foi publicado
 $h = static fn(?string $s): string => e((string) $s);
 $linkify = static fn(string $escaped): string => preg_replace(
     '~(https?://[^\s<]+)~u',
@@ -65,6 +66,29 @@ $heading = static fn(string $t): string => '<div style="margin:26px 0 12px;font-
   <?= $row('Servidor', $server) ?>
   <?= $row('URL', $result['url'] ?? null) ?>
   <?= $row('Vencimento', $result['expires'] ?? null, false) ?>
+</table>
+<?php endif; ?>
+
+<?php if (!empty($app['code'])): ?>
+<?= $heading('Aplicativo Dominius Play') ?>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 6px;border:1px solid #2A3456;border-radius:14px;background:#0A0F1C;border-collapse:separate;">
+  <tr><td style="padding:20px 18px 6px;text-align:center;">
+    <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8E98B0;">Seu código de ativação</div>
+    <div style="margin:8px 0 4px;font-family:Consolas,Menlo,monospace;font-size:34px;line-height:1.1;font-weight:800;letter-spacing:.14em;color:#FFC94D;"><?= $h($app['code']) ?></div>
+    <div style="font-size:13px;color:#8E98B0;">Digite este código no app e pronto: sem usuário, sem senha, sem servidor.</div>
+  </td></tr>
+  <tr><td style="padding:14px 18px 6px;font-size:14.5px;line-height:1.7;color:#C3CADB;">
+    <strong style="color:#FFFFFF;">1.</strong> Baixe e instale o aplicativo.<br>
+    <strong style="color:#FFFFFF;">2.</strong> Abra o app e digite o código acima.<br>
+    <strong style="color:#FFFFFF;">3.</strong> Escolha Canais ao vivo, Filmes ou Séries e aproveite.
+  </td></tr>
+  <tr><td align="center" style="padding:10px 18px 20px;">
+    <table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:999px;background:#FF7A2F;background-image:linear-gradient(135deg,#FFC94D,#FF7A2F 55%,#FF4D6D);"><a href="<?= $h($app['url']) ?>" style="display:inline-block;padding:14px 28px;font-size:14px;font-weight:800;color:#1A0E05;text-decoration:none;text-transform:uppercase;">Baixar o aplicativo</a></td></tr></table>
+    <div style="margin-top:12px;font-size:13px;line-height:1.6;color:#8E98B0;">
+      Na TV ou TV Box: abra o <strong style="color:#C3CADB;">Downloader</strong> e digite
+      <strong style="color:#FFC94D;"><?= $h(preg_replace('~^https?://~', '', (string) $app['url'])) ?></strong><?= !empty($app['downloader']) ? ' (ou o código <strong style="color:#FFC94D;">' . $h($app['downloader']) . '</strong>)' : '' ?>.
+    </div>
+  </td></tr>
 </table>
 <?php endif; ?>
 

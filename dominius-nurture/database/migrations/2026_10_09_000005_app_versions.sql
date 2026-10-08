@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS app_versions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  version_code INT UNSIGNED NOT NULL,
+  version_name VARCHAR(20) NOT NULL,
+  file_name VARCHAR(190) NOT NULL,
+  size_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  sha256 CHAR(64) NOT NULL,
+  notes TEXT NULL,
+  mandatory TINYINT(1) NOT NULL DEFAULT 0,
+  downloads INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_app_version_code (version_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

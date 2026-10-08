@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS app_notices (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  kind VARCHAR(10) NOT NULL DEFAULT 'info',
+  placement VARCHAR(10) NOT NULL DEFAULT 'home',
+  audience VARCHAR(10) NOT NULL DEFAULT 'all',
+  title VARCHAR(150) NOT NULL,
+  body TEXT NULL,
+  image_path VARCHAR(190) NULL,
+  link_url VARCHAR(255) NULL,
+  link_label VARCHAR(40) NULL,
+  starts_at DATETIME NULL,
+  ends_at DATETIME NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  views INT UNSIGNED NOT NULL DEFAULT 0,
+  clicks INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NULL,
+  KEY idx_app_notice_active (is_active, placement)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
