@@ -43,7 +43,17 @@ final class NurtureAdminController extends AdminController
         foreach (Database::fetchAll('SELECT status, COUNT(*) AS c FROM nurture_subscriptions GROUP BY status') as $r) {
             $counts[$r['status']] = (int) $r['c'];
         }
+        $broadcasts = Database::fetchAll(
+            "SELECT b.id, b.created_at, b.message, b.total,
+                    COALESCE(SUM(i.status = 'sent'), 0) AS sent, COALESCE(SUM(i.status = 'pending'), 0) AS pending,
+                    COALESCE(SUM(i.status IN ('failed','skipped')), 0) AS failed
+             FROM nurture_broadcasts b LEFT JOIN nurture_broadcast_items i ON i.broadcast_id = b.id
+             GROUP BY b.id, b.created_at, b.message, b.total ORDER BY b.id DESC LIMIT 6"
+        );
         $this->view('nurture/index', [
+            'broadcasts' => $broadcasts,
+            'dailyCap' => max(1, (int) \App\Core\Env::get('NURTURE_DAILY_CAP', 60)),
+            'waReady' => \App\Services\NurtureService::whatsappConfigured(),
             'rows' => $rows,
             'counts' => $counts,
             'q' => $q,
@@ -85,6 +95,44 @@ final class NurtureAdminController extends AdminController
         $n = Database::delete('nurture_subscriptions', 'id = :id', ['id' => (int) $id]);
         audit('nurture_delete', 'nurture', (int) $id);
         flash($n ? 'success' : 'error', $n ? 'Registro excluído da sequência.' : 'Registro não encontrado.');
+        $this->back();
+    }
+
+    /** Promoção manual: programa o envio para as pessoas marcadas, ou manda só um teste para um número. */
+    public function broadcast(Request $request): void
+    {
+        $message = trim(str_replace("\r", '', (string) ($request->post['message'] ?? '')));
+        $message = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $message) ?? '';
+        $action = (string) ($request->post['action'] ?? 'send');
+        if (mb_strlen($message) < 10 || mb_strlen($message) > 1000) {
+            flash('error', 'Escreva a mensagem (de 10 a 1000 caracteres).');
+            $this->back();
+        }
+
+        if ($action === 'test') {
+            $digits = preg_replace('/\D+/', '', (string) ($request->post['test_phone'] ?? '')) ?? '';
+            if ($digits !== '' && strlen($digits) <= 11) {
+                $digits = '55' . $digits;
+            }
+            $res = \App\Services\NurtureService::sendWhatsapp($digits, \App\Services\NurtureService::broadcastText($message, 'Maria Silva'));
+            flash($res['ok'] ? 'success' : 'error', $res['ok'] ? 'Teste enviado (com o nome "Maria").' : 'Falha ao enviar o teste: ' . (string) $res['error']);
+            $this->back();
+        }
+
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array) ($request->post['ids'] ?? [])))));
+        if (!$ids) {
+            flash('error', 'Marque pelo menos uma pessoa na lista.');
+            $this->back();
+        }
+        if (count($ids) > 200) {
+            flash('error', 'Escolha no máximo 200 pessoas por promoção.');
+            $this->back();
+        }
+        $r = \App\Services\NurtureService::queueBroadcast($message, $ids);
+        audit('nurture_broadcast', 'nurture', $r['broadcast'], ['queued' => $r['queued'], 'skipped' => $r['skipped']]);
+        flash($r['queued'] ? 'success' : 'error', $r['queued']
+            ? "Promoção programada para {$r['queued']} pessoa(s)" . ($r['skipped'] ? " ({$r['skipped']} ignorada(s): saíram da lista ou sem telefone)" : '') . '. As mensagens saem aos poucos, das 9h às 20h.'
+            : 'Nenhuma das pessoas marcadas pode receber (saíram da lista ou estão sem telefone).');
         $this->back();
     }
 

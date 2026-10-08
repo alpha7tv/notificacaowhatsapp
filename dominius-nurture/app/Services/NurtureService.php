@@ -76,7 +76,7 @@ final class NurtureService
     public static function runDue(int $limit = 20): int
     {
         if (!self::enabled()) {
-            return 0;
+            return self::runBroadcast(time());
         }
         $started = time();
         $count = 0;
@@ -144,6 +144,9 @@ final class NurtureService
                     }
                 }
             }
+
+            // 1c) Promoções manuais programadas pelo painel
+            $count += self::runBroadcast($started);
 
             // 2) E-mails vencidos
             $due = Database::fetchAll(
@@ -309,6 +312,108 @@ final class NurtureService
              WHERE status = 'active' AND (LOWER(email) = :e OR (:d <> '' AND REPLACE(phone_e164, '+', '') LIKE :dl))",
             ['e' => mb_strtolower($who), 'd' => $digits, 'dl' => '%' . $digits]
         )->rowCount();
+    }
+
+    // ------------------------------------------------------------------ promoção manual (WhatsApp)
+
+    /**
+     * Programa uma promoção para as inscrições escolhidas no painel. O envio sai aos poucos (worker).
+     * @param int[] $ids
+     * @return array{queued:int,skipped:int,broadcast:int}
+     */
+    public static function queueBroadcast(string $message, array $ids): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        $broadcastId = Database::insert('nurture_broadcasts', ['message' => $message, 'total' => 0, 'created_at' => Database::now()]);
+        $queued = 0;
+        foreach ($ids as $id) {
+            $sub = Database::fetch(
+                "SELECT id, name, phone_e164, status FROM nurture_subscriptions WHERE id = :id AND status <> 'unsubscribed' AND phone_e164 IS NOT NULL AND phone_e164 <> ''",
+                ['id' => $id]
+            );
+            if (!$sub) {
+                continue;
+            }
+            Database::insert('nurture_broadcast_items', [
+                'broadcast_id' => $broadcastId,
+                'subscription_id' => (int) $sub['id'],
+                'phone_e164' => $sub['phone_e164'],
+                'name' => $sub['name'],
+                'status' => 'pending',
+                'created_at' => Database::now(),
+            ]);
+            $queued++;
+        }
+        Database::query('UPDATE nurture_broadcasts SET total = :t WHERE id = :id', ['t' => $queued, 'id' => $broadcastId]);
+        return ['queued' => $queued, 'skipped' => count($ids) - $queued, 'broadcast' => $broadcastId];
+    }
+
+    /** Texto final da promoção para uma pessoa (nome e remetente + aviso de saída). */
+    public static function broadcastText(string $template, string $name): string
+    {
+        $tr = [
+            '{first}' => explode(' ', trim($name))[0] ?: 'tudo bem',
+            '{sender}' => (string) Env::get('NURTURE_SENDER_NAME', 'Carlos'),
+            '{site}' => (string) setting('site_name', 'Dominius Play'),
+        ];
+        $cfg = (array) require dirname(__DIR__, 2) . '/config/nurture_whatsapp.php';
+        return strtr($template, $tr) . (string) ($cfg['optout'] ?? '');
+    }
+
+    /** Envia poucas mensagens por minuto, só em horário comercial e até o limite diário. */
+    private static function runBroadcast(int $started): int
+    {
+        if (!self::whatsappConfigured()) {
+            return 0;
+        }
+        try {
+            if (self::nextWindow(time()) > time() + 60) {
+                return 0;
+            }
+            $cap = max(1, (int) Env::get('NURTURE_DAILY_CAP', 60));
+            $dayStart = (new \DateTimeImmutable('today', new \DateTimeZone('America/Sao_Paulo')))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+            $sentToday = (int) Database::value("SELECT COUNT(*) FROM nurture_broadcast_items WHERE status = 'sent' AND sent_at >= :t", ['t' => $dayStart]);
+            $room = $cap - $sentToday;
+            if ($room <= 0) {
+                return 0;
+            }
+            $items = Database::fetchAll(
+                "SELECT i.*, b.message, s.status AS sub_status FROM nurture_broadcast_items i
+                 JOIN nurture_broadcasts b ON b.id = i.broadcast_id
+                 LEFT JOIN nurture_subscriptions s ON s.id = i.subscription_id
+                 WHERE i.status = 'pending' AND i.attempts < 3 ORDER BY i.id LIMIT " . min(2, $room)
+            );
+            $sent = 0;
+            foreach ($items as $it) {
+                if (time() - $started > 45) {
+                    break;
+                }
+                if ($it['sub_status'] === null || $it['sub_status'] === 'unsubscribed') {
+                    Database::query("UPDATE nurture_broadcast_items SET status = 'skipped', error = 'pessoa saiu da lista' WHERE id = :id AND status = 'pending'", ['id' => $it['id']]);
+                    continue;
+                }
+                $claim = Database::query(
+                    "UPDATE nurture_broadcast_items SET attempts = attempts + 1 WHERE id = :id AND status = 'pending' AND attempts = :a",
+                    ['id' => $it['id'], 'a' => $it['attempts']]
+                )->rowCount();
+                if ($claim !== 1) {
+                    continue;
+                }
+                $res = self::sendWhatsapp((string) $it['phone_e164'], self::broadcastText((string) $it['message'], (string) $it['name']));
+                if ($res['ok']) {
+                    Database::query("UPDATE nurture_broadcast_items SET status = 'sent', sent_at = UTC_TIMESTAMP(), error = NULL WHERE id = :id", ['id' => $it['id']]);
+                    $sent++;
+                    sleep(random_int(5, 9));
+                } else {
+                    $final = ((int) $it['attempts'] + 1) >= 3;
+                    Database::query('UPDATE nurture_broadcast_items SET status = :st, error = :e WHERE id = :id', ['id' => $it['id'], 'st' => $final ? 'failed' : 'pending', 'e' => mb_substr((string) $res['error'], 0, 250)]);
+                }
+            }
+            return $sent;
+        } catch (\Throwable $e) {
+            Logger::error('Nurture: falha na promoção manual', ['e' => $e->getMessage()]);
+            return 0;
+        }
     }
 
     // ------------------------------------------------------------------ conteúdo
