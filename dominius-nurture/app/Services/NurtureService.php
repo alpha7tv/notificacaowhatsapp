@@ -6,6 +6,7 @@ namespace App\Services;
 use App\Core\Database;
 use App\Core\Env;
 use App\Core\Logger;
+use App\Core\View;
 
 /**
  * Sequência de nutrição de revendedores: WhatsApp na entrada + 1 e-mail a cada 2 dias (10 e-mails / 20 dias).
@@ -154,7 +155,7 @@ final class NurtureService
             return false;
         }
         $data = self::emailData($row, $idx);
-        $res = Mailer::sendTemplate((string) $row['email'], $data['subject'], 'nurture', $data, 'nurture', (int) $row['id']);
+        $res = self::deliverEmail((string) $row['email'], $data, 'nurture', (int) $row['id']);
         if ($res['ok']) {
             self::advance((int) $row['id'], $idx, count($steps));
             return true;
@@ -195,7 +196,8 @@ final class NurtureService
         }
         $row = ['id' => 0, 'name' => 'Teste Preview', 'token' => str_repeat('0', 40)];
         $data = self::emailData($row, $idx);
-        return Mailer::sendTemplate($to, '[PREVIEW] ' . $data['subject'], 'nurture', $data, 'nurture-preview', null);
+        $data['subject'] = '[PREVIEW] ' . $data['subject'];
+        return self::deliverEmail($to, $data, 'nurture-preview', null);
     }
 
     public static function findByToken(string $token): ?array
@@ -299,8 +301,21 @@ final class NurtureService
                         $blocks[] = ['type' => $type, 'text' => $text];
                     }
                     break;
+                case 'callout':
+                    $text = trim($fill($val));
+                    if ($text !== '') {
+                        $blocks[] = ['type' => 'callout', 'text' => $text];
+                    }
+                    break;
                 case 'list':
-                    $blocks[] = ['type' => 'list', 'items' => array_map($fill, $val)];
+                case 'steps':
+                    $blocks[] = ['type' => $type, 'items' => array_map($fill, $val)];
+                    break;
+                case 'stats':
+                    $items = self::stats($val, $plans, $min, $max);
+                    if ($items) {
+                        $blocks[] = ['type' => 'stats', 'items' => $items];
+                    }
                     break;
                 case 'plans':
                     if ($plans[$val]) {
@@ -320,6 +335,7 @@ final class NurtureService
         return [
             'subject' => $fill($step['subject']),
             'pre' => $fill($step['pre']),
+            'eyebrow' => $step['eyebrow'] ?? 'Revenda IPTV',
             'title' => $fill($step['title']),
             'blocks' => $blocks,
             'cta' => $step['cta'],
@@ -327,23 +343,153 @@ final class NurtureService
             'link' => isset($step['link']) ? ['label' => $step['link'][0], 'url' => url($step['link'][1])] : null,
             'unsubUrl' => url('descadastrar/' . ($row['token'] ?? '')),
             'sender' => (string) Env::get('NURTURE_SENDER_NAME', 'Carlos'),
+            'role' => (string) Env::get('NURTURE_SENDER_ROLE', 'Consultor de revendas'),
             'name' => $first,
             'stepNumber' => $idx + 1,
+            'stepTotal' => count(self::steps()),
         ];
     }
 
     private static function plans(string $category): array
     {
         $rows = Database::fetchAll(
-            'SELECT name, credits, price FROM plans WHERE category = :c AND is_active = 1 ORDER BY sort_order',
+            'SELECT name, credits, price, badge FROM plans WHERE category = :c AND is_active = 1 ORDER BY sort_order',
             ['c' => $category]
         );
-        foreach ($rows as &$r) {
+        $bestKey = null;
+        foreach ($rows as $k => &$r) {
             $r['credits'] = (int) $r['credits'];
             $r['price'] = (float) $r['price'];
             $r['per_credit'] = $r['credits'] > 0 ? $r['price'] / $r['credits'] : 0.0;
+            $r['tag'] = trim((string) ($r['badge'] ?? ''));
+            $r['best'] = false;
+            if ($r['credits'] > 0 && ($bestKey === null || $r['per_credit'] < $rows[$bestKey]['per_credit'])) {
+                $bestKey = $k;
+            }
+        }
+        unset($r);
+        if ($bestKey !== null) {
+            $rows[$bestKey]['best'] = true;
+            if ($rows[$bestKey]['tag'] === '') {
+                $rows[$bestKey]['tag'] = 'Melhor custo';
+            }
         }
         return $rows;
+    }
+
+    /** Números em destaque do e-mail. */
+    private static function stats(array $keys, array $plans, float $min, float $max): array
+    {
+        $all = array_merge($plans['prepago'], $plans['mensalista']);
+        $cheapest = null;
+        foreach ($all as $p) {
+            if ($p['credits'] > 0 && ($cheapest === null || $p['per_credit'] < $cheapest)) {
+                $cheapest = $p['per_credit'];
+            }
+        }
+        $int = static fn(float $v): string => 'R$ ' . number_format($v, 0, ',', '.');
+        $out = [];
+        foreach ($keys as $k) {
+            switch ($k) {
+                case 'credit_min':
+                    if ($cheapest !== null) {
+                        $out[] = ['value' => money($cheapest), 'label' => 'menor custo por crédito'];
+                    }
+                    break;
+                case 'credit_prepago':
+                    if ($plans['prepago']) {
+                        $m = min(array_map(static fn($p) => $p['credits'] > 0 ? $p['per_credit'] : INF, $plans['prepago']));
+                        $out[] = ['value' => money($m), 'label' => 'menor custo por crédito no pré-pago'];
+                    }
+                    break;
+                case 'prepago_min':
+                    if ($plans['prepago']) {
+                        $out[] = ['value' => $int($plans['prepago'][0]['price']), 'label' => 'pacote inicial, sem mensalidade'];
+                    }
+                    break;
+                case 'mensal_min':
+                    if ($plans['mensalista']) {
+                        $out[] = ['value' => $int($plans['mensalista'][0]['price']) . '/mês', 'label' => 'plano mensalista a partir de'];
+                    }
+                    break;
+                case 'days':
+                    $out[] = ['value' => (int) setting('credit_days', 30) . ' dias', 'label' => 'de acesso a cada ativação'];
+                    break;
+                case 'range':
+                    $out[] = ['value' => $int($min) . '–' . number_format($max, 0, ',', '.'), 'label' => 'referência de preço ao cliente final'];
+                    break;
+            }
+        }
+        return $out;
+    }
+
+    /** Monta o HTML e a versão em texto e envia. */
+    private static function deliverEmail(string $to, array $data, string $template, ?int $relatedId): array
+    {
+        try {
+            $html = View::make('emails.nurture', $data);
+        } catch (\Throwable $e) {
+            Logger::error('Nurture: falha ao montar o e-mail', ['e' => $e->getMessage()]);
+            return ['ok' => false, 'error' => 'Falha ao montar o e-mail.'];
+        }
+        return Mailer::send($to, $data['subject'], $html, self::plainText($data), $template, 'nurture', $relatedId);
+    }
+
+    private static function plainText(array $d): string
+    {
+        $t = [mb_strtoupper($d['eyebrow']), $d['title'], ''];
+        $strip = static fn(string $s): string => str_replace('**', '', $s);
+        $t[0] = $strip($t[0]);
+        $t[1] = $strip($t[1]);
+        foreach ($d['blocks'] as $b) {
+            switch ($b['type']) {
+                case 'p':
+                case 'note':
+                case 'callout':
+                    $t[] = $strip($b['text']);
+                    $t[] = '';
+                    break;
+                case 'list':
+                    foreach ($b['items'] as $i) {
+                        $t[] = '- ' . $strip($i);
+                    }
+                    $t[] = '';
+                    break;
+                case 'steps':
+                    foreach ($b['items'] as $n => $i) {
+                        $t[] = ($n + 1) . '. ' . $strip($i);
+                    }
+                    $t[] = '';
+                    break;
+                case 'stats':
+                    foreach ($b['items'] as $i) {
+                        $t[] = $i['value'] . ' - ' . $i['label'];
+                    }
+                    $t[] = '';
+                    break;
+                case 'plans':
+                    foreach ($b['rows'] as $r) {
+                        $t[] = $r['name'] . ': ' . money($r['price']) . ($b['kind'] === 'mensalista' ? '/mês' : '') . ' (' . $r['credits'] . ' créditos, ' . money($r['per_credit']) . ' por crédito)';
+                    }
+                    $t[] = '';
+                    break;
+                case 'sim':
+                    foreach ($b['rows'] as $r) {
+                        $t[] = $r['clients'] . ' clientes: sobra ' . money($r['profit']) . ' por mês (plano ' . $r['plan'] . ', custo ' . money($r['cost']) . ', faturamento ' . money($r['revenue']) . ')';
+                    }
+                    $t[] = '';
+                    break;
+            }
+        }
+        $t[] = $d['cta'] . ': ' . $d['waUrl'];
+        if (!empty($d['link'])) {
+            $t[] = $d['link']['label'] . ': ' . $d['link']['url'];
+        }
+        $t[] = '';
+        $t[] = $d['sender'] . ' - ' . $d['role'];
+        $t[] = '';
+        $t[] = 'Para parar de receber: ' . $d['unsubUrl'];
+        return implode("\n", $t);
     }
 
     /** Plano mais barato que cobre N clientes e o resultado do exemplo. */
