@@ -46,7 +46,7 @@ final class AppService
             'support_whatsapp' => ['WhatsApp de suporte (com 55 e DDD)', preg_replace('/\D+/', '', (string) Env::get('NURTURE_WHATSAPP', '5514988159045')) ?: '5514988159045'],
             'default_server' => ['Servidor (DNS) dos clientes, cadastrado uma única vez (ex.: http://seudns.com:80)', ''],
             'expired_title' => ['Título quando o acesso vence', 'Seu acesso venceu'],
-            'expired_message' => ['Mensagem quando o acesso vence', 'Fale com a gente pelo WhatsApp para renovar e voltar a assistir.'],
+            'expired_message' => ['Mensagem quando o acesso vence', 'Renove o seu acesso com o seu fornecedor para voltar a assistir.'],
             'downloader_code' => ['Código do Downloader (opcional, para TV)', ''],
             'max_devices' => ['Aparelhos por cliente (padrão)', '2'],
         ];
@@ -161,10 +161,10 @@ final class AppService
         }
         $client = Database::fetch('SELECT * FROM app_clients WHERE code = :c', ['c' => $code]);
         if (!$client) {
-            return ['ok' => false, 'error' => 'not_found', 'message' => 'Código não encontrado. Confira os números ou fale com o suporte.'];
+            return ['ok' => false, 'error' => 'not_found', 'message' => 'Código não encontrado. Confira os números ou fale com o seu fornecedor.'];
         }
         if ($client['status'] === 'blocked') {
-            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o suporte.'];
+            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o seu fornecedor.'];
         }
         return self::bindDevice($client, $deviceKey, $model, $appVersion, $ip);
     }
@@ -176,7 +176,7 @@ final class AppService
         if (!$dev) {
             $count = (int) Database::value('SELECT COUNT(*) FROM app_devices WHERE client_id = :c', ['c' => $client['id']]);
             if ($count >= (int) $client['max_devices']) {
-                return ['ok' => false, 'error' => 'device_limit', 'message' => 'Limite de aparelhos atingido para este código. Fale com o suporte para liberar.'];
+                return ['ok' => false, 'error' => 'device_limit', 'message' => 'Limite de aparelhos atingido para este código. Fale com o seu fornecedor para liberar.'];
             }
         }
         $token = bin2hex(random_bytes(24));
@@ -218,7 +218,7 @@ final class AppService
         if (!$client) {
             $server = self::cleanServer(self::cfg('default_server', ''));
             if ($server === '') {
-                return ['ok' => false, 'error' => 'no_server', 'message' => 'Servidor não configurado. Fale com o suporte.'];
+                return ['ok' => false, 'error' => 'no_server', 'message' => 'Servidor não configurado. Fale com o seu fornecedor.'];
             }
             $chk = self::xtreamCheck($server, $user, $pass);
             if (!$chk['ok']) {
@@ -253,7 +253,7 @@ final class AppService
             }
         }
         if (($client['status'] ?? '') === 'blocked') {
-            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o suporte.'];
+            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o seu fornecedor.'];
         }
         return self::bindDevice($client, $deviceKey, $model, $appVersion, $ip);
     }
@@ -276,7 +276,7 @@ final class AppService
         $j = json_decode((string) $raw, true);
         $info = is_array($j) ? ($j['user_info'] ?? null) : null;
         if (!is_array($info) || (int) ($info['auth'] ?? 0) !== 1) {
-            return ['ok' => false, 'error' => 'bad_login', 'message' => 'Usuário ou senha incorretos. Confira os dados ou fale com o suporte.'];
+            return ['ok' => false, 'error' => 'bad_login', 'message' => 'Usuário ou senha incorretos. Confira os dados ou fale com o seu fornecedor.'];
         }
         $exp = isset($info['exp_date']) && is_numeric($info['exp_date']) && (int) $info['exp_date'] > 0 ? (int) $info['exp_date'] : null;
         return ['ok' => true, 'exp' => $exp, 'trial' => (string) ($info['is_trial'] ?? '0') === '1'];
@@ -294,7 +294,7 @@ final class AppService
         }
         $client = Database::fetch('SELECT * FROM app_clients WHERE id = :id', ['id' => $dev['client_id']]);
         if (!$client || $client['status'] === 'blocked') {
-            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o suporte.'];
+            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o seu fornecedor.'];
         }
         Database::update('app_devices', ['last_seen_at' => Database::now(), 'app_version' => mb_substr($appVersion, 0, 20), 'ip' => mb_substr($ip, 0, 45)], 'id = :id', ['id' => $dev['id']]);
         Database::query('UPDATE app_clients SET last_seen_at = UTC_TIMESTAMP() WHERE id = :id', ['id' => $client['id']]);
