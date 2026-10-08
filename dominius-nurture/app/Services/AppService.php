@@ -44,7 +44,7 @@ final class AppService
         return [
             'app_name' => ['Nome do aplicativo', 'Dominius Play'],
             'support_whatsapp' => ['WhatsApp de suporte (com 55 e DDD)', preg_replace('/\D+/', '', (string) Env::get('NURTURE_WHATSAPP', '5514988159045')) ?: '5514988159045'],
-            'default_server' => ['Servidor padrão (http://...)', ''],
+            'default_server' => ['Servidor (DNS) dos clientes, cadastrado uma única vez (ex.: http://seudns.com:80)', ''],
             'expired_title' => ['Título quando o acesso vence', 'Seu acesso venceu'],
             'expired_message' => ['Mensagem quando o acesso vence', 'Fale com a gente pelo WhatsApp para renovar e voltar a assistir.'],
             'downloader_code' => ['Código do Downloader (opcional, para TV)', ''],
@@ -166,6 +166,12 @@ final class AppService
         if ($client['status'] === 'blocked') {
             return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o suporte.'];
         }
+        return self::bindDevice($client, $deviceKey, $model, $appVersion, $ip);
+    }
+
+    /** Registra/atualiza o aparelho do cliente e devolve a sessão (token) para o app. */
+    private static function bindDevice(array $client, string $deviceKey, string $model, string $appVersion, string $ip): array
+    {
         $dev = Database::fetch('SELECT * FROM app_devices WHERE client_id = :c AND device_key = :d', ['c' => $client['id'], 'd' => $deviceKey]);
         if (!$dev) {
             $count = (int) Database::value('SELECT COUNT(*) FROM app_devices WHERE client_id = :c', ['c' => $client['id']]);
@@ -188,6 +194,92 @@ final class AppService
         }
         Database::query('UPDATE app_clients SET last_seen_at = UTC_TIMESTAMP() WHERE id = :id', ['id' => $client['id']]);
         return ['ok' => true, 'payload' => self::payload($client) + ['token' => $token]];
+    }
+
+    /**
+     * Entrada por usuário e senha (o servidor/DNS vem do painel, cadastrado uma única vez).
+     * Se o usuário ainda não existe no painel, confere no servidor IPTV e cria o cliente automaticamente.
+     */
+    public static function login(string $user, string $pass, string $deviceKey, string $model, string $appVersion, string $ip): array
+    {
+        $user = trim($user);
+        if ($user === '' || mb_strlen($user) > 120 || $pass === '' || mb_strlen($pass) > 200 || !preg_match('/^[A-Za-z0-9_\-]{8,64}$/', $deviceKey)) {
+            return ['ok' => false, 'error' => 'invalid', 'message' => 'Digite o usuário e a senha.'];
+        }
+        $rows = Database::fetchAll('SELECT * FROM app_clients WHERE username = :u', ['u' => $user]);
+        $client = null;
+        foreach ($rows as $r) {
+            $stored = $r['password_enc'] ? (string) Crypto::decrypt($r['password_enc']) : '';
+            if ($stored !== '' && hash_equals($stored, $pass)) {
+                $client = $r;
+                break;
+            }
+        }
+        if (!$client) {
+            $server = self::cleanServer(self::cfg('default_server', ''));
+            if ($server === '') {
+                return ['ok' => false, 'error' => 'no_server', 'message' => 'Servidor não configurado. Fale com o suporte.'];
+            }
+            $chk = self::xtreamCheck($server, $user, $pass);
+            if (!$chk['ok']) {
+                return ['ok' => false, 'error' => $chk['error'], 'message' => $chk['message']];
+            }
+            $exp = $chk['exp'] !== null ? gmdate('Y-m-d H:i:s', $chk['exp']) : null;
+            if ($rows) {
+                // cliente já cadastrado com este usuário, mas a senha mudou no servidor → atualiza
+                $client = $rows[0];
+                Database::update('app_clients', ['password_enc' => Crypto::encrypt($pass), 'expires_at' => $exp, 'updated_at' => Database::now()], 'id = :id', ['id' => $client['id']]);
+                $client['expires_at'] = $exp;
+            } else {
+                $id = self::createClient([
+                    'name' => $user,
+                    'server_url' => $server,
+                    'username' => $user,
+                    'password' => $pass,
+                    'expires_at' => $exp,
+                    'is_trial' => $chk['trial'] ? 1 : 0,
+                    'notes' => 'Criado automaticamente no primeiro acesso pelo app.',
+                ]);
+                $client = Database::fetch('SELECT * FROM app_clients WHERE id = :id', ['id' => $id]);
+            }
+        } elseif (($client['status'] ?? '') !== 'blocked' && $client['expires_at'] !== null && self::isExpired($client)) {
+            // pode ter sido renovado no servidor: confere de novo
+            $server = (string) ($client['server_url'] ?: self::cfg('default_server', ''));
+            $chk = $server !== '' ? self::xtreamCheck(self::cleanServer($server), $user, $pass) : ['ok' => false];
+            if (!empty($chk['ok']) && $chk['exp'] !== null && $chk['exp'] > time()) {
+                $exp = gmdate('Y-m-d H:i:s', $chk['exp']);
+                Database::update('app_clients', ['expires_at' => $exp, 'updated_at' => Database::now()], 'id = :id', ['id' => $client['id']]);
+                $client['expires_at'] = $exp;
+            }
+        }
+        if (($client['status'] ?? '') === 'blocked') {
+            return ['ok' => false, 'error' => 'blocked', 'message' => 'Este acesso está bloqueado. Fale com o suporte.'];
+        }
+        return self::bindDevice($client, $deviceKey, $model, $appVersion, $ip);
+    }
+
+    /** Confere usuário/senha direto no servidor IPTV (Xtream: player_api.php). */
+    public static function xtreamCheck(string $server, string $user, string $pass): array
+    {
+        $url = rtrim($server, '/') . '/player_api.php?username=' . rawurlencode($user) . '&password=' . rawurlencode($pass);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_FOLLOWLOCATION => false, CURLOPT_USERAGENT => 'DominiusPlay/1.0', CURLOPT_MAXFILESIZE => 2000000,
+        ]);
+        $raw = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if ($raw === false || $code === 0 || $code >= 500) {
+            return ['ok' => false, 'error' => 'server_down', 'message' => 'Servidor indisponível no momento. Tente de novo em instantes.'];
+        }
+        $j = json_decode((string) $raw, true);
+        $info = is_array($j) ? ($j['user_info'] ?? null) : null;
+        if (!is_array($info) || (int) ($info['auth'] ?? 0) !== 1) {
+            return ['ok' => false, 'error' => 'bad_login', 'message' => 'Usuário ou senha incorretos. Confira os dados ou fale com o suporte.'];
+        }
+        $exp = isset($info['exp_date']) && is_numeric($info['exp_date']) && (int) $info['exp_date'] > 0 ? (int) $info['exp_date'] : null;
+        return ['ok' => true, 'exp' => $exp, 'trial' => (string) ($info['is_trial'] ?? '0') === '1'];
     }
 
     /** Atualização periódica do app: autenticada pelo token do aparelho. */

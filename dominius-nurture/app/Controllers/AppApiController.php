@@ -60,6 +60,26 @@ final class AppApiController
         json_response(['ok' => true] + $res['payload']);
     }
 
+    /** Entrada por usuário e senha (servidor vem do painel). */
+    public function login(Request $request): void
+    {
+        $this->limited($request, 'login', 15, 3600);
+        $this->noStore();
+        $b = $this->body();
+        $res = AppService::login(
+            (string) ($b['username'] ?? ''),
+            (string) ($b['password'] ?? ''),
+            (string) ($b['device_key'] ?? ''),
+            (string) ($b['model'] ?? ''),
+            (string) ($b['app_version'] ?? ''),
+            $request->ip()
+        );
+        if (!$res['ok']) {
+            json_response(['ok' => false, 'error' => $res['error'], 'message' => $res['message']], $res['error'] === 'device_limit' ? 409 : 422);
+        }
+        json_response(['ok' => true] + $res['payload']);
+    }
+
     public function refresh(Request $request): void
     {
         $this->limited($request, 'ref', 240, 3600);
