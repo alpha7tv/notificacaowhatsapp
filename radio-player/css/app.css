@@ -307,11 +307,11 @@ svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
 .mini-text small { color: var(--muted); font-size: .84rem; }
 
 .play {
-  display: grid; place-items: center; border: 0; border-radius: 999px;
-  background: var(--accent); color: var(--accent-text); flex: none;
+  display: grid; place-items: center; border: var(--play-border, 0); border-radius: 999px;
+  background: var(--play-bg, var(--accent)); color: var(--play-fg, var(--accent-text)); flex: none;
 }
 .play.sm { width: 50px; height: 50px; }
-.play.lg { width: 80px; height: 80px; box-shadow: var(--glow); }
+.play.lg { width: 80px; height: 80px; box-shadow: var(--play-shadow, var(--glow)); }
 .play.lg svg { width: 36px; height: 36px; }
 .play.loading svg { opacity: 0; }
 .play.loading { position: relative; }

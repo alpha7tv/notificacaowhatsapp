@@ -192,3 +192,5 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .chat-send { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 .chat-send #chatNick { width: 120px; flex: none; }
 .chat-send #chatText { flex: 1; min-width: 0; }
+.theme-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.themes { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }

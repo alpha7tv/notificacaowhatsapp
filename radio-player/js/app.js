@@ -418,7 +418,7 @@
   }
   function closePlayer(fromHistory = false) {
     const p = $('#player');
-    if (!p.classList.contains('open')) return;
+    if (!p.classList.contains('open') || document.body.classList.contains('single')) return;
     p.classList.remove('open');
     p.setAttribute('aria-hidden', 'true');
     if (!fromHistory && history.state?.player) history.back();
@@ -781,7 +781,7 @@
     $('#aboutText').textContent = cfg.about || '';
     $('#aboutText').hidden = !cfg.about;
     $('#contacts').innerHTML = links.map(([k, label]) =>
-      `<a href="${escapeHtml(cfg.contacts[k])}" target="_blank" rel="noopener" aria-label="${label}" title="${label}"><svg><use href="#i-${k}"/></svg></a>`
+      `<a class="s-${k}" href="${escapeHtml(cfg.contacts[k])}" target="_blank" rel="noopener" aria-label="${label}" title="${label}"><svg><use href="#i-${k}"/></svg></a>`
     ).join('');
     $('#about').hidden = !cfg.about && !links.length;
     $('#playerSocial').innerHTML = $('#contacts').innerHTML;
@@ -797,12 +797,13 @@
   const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   let installEvt = null;
 
-  if (!isStandalone() && location.protocol !== 'file:') $('#installBtn').hidden = false;
+  const setInstallVisible = (v) => { $('#installBtn').hidden = !v; $('#installBtn2').hidden = !v; };
+  if (!isStandalone() && location.protocol !== 'file:') setInstallVisible(true);
 
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     installEvt = e;
-    $('#installBtn').hidden = false;
+    setInstallVisible(true);
   });
 
   function installSteps() {
@@ -822,18 +823,20 @@
     return '<ol><li>Clique no ícone de <b>instalar</b> na barra de endereço do navegador (ou no menu <b>⋮</b>).</li><li>Confirme em <b>Instalar</b>.</li></ol>';
   }
 
-  $('#installBtn').addEventListener('click', async () => {
+  const doInstall = async () => {
     if (installEvt) {
       installEvt.prompt();
       const { outcome } = await installEvt.userChoice;
       installEvt = null;
-      if (outcome === 'accepted') $('#installBtn').hidden = true;
+      if (outcome === 'accepted') setInstallVisible(false);
       return;
     }
     $('#installSteps').innerHTML = installSteps();
     $('#installDialog').showModal();
-  });
-  window.addEventListener('appinstalled', () => { $('#installBtn').hidden = true; toast('Aplicativo instalado!'); });
+  };
+  $('#installBtn').addEventListener('click', doInstall);
+  $('#installBtn2').addEventListener('click', doInstall);
+  window.addEventListener('appinstalled', () => { setInstallVisible(false); toast('Aplicativo instalado!'); });
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
@@ -1038,19 +1041,39 @@
 
   // ---------- Temas visuais ----------
 
-  const SKIN_FONTS = {
-    gospel: 'family=Cinzel:wght@600;700&family=Nunito+Sans:wght@400;600;700;800',
-    sertanejo: 'family=Oswald:wght@500;600;700&family=Nunito+Sans:wght@400;600;700;800',
-    poprock: 'family=Unbounded:wght@600;700&family=Nunito+Sans:wght@400;600;700;800',
-    raiz: 'family=Rye&family=Lora:wght@400;600;700',
-    forro: 'family=Baloo+2:wght@500;600;700;800',
+  // Estilo → fontes (Google Fonts) e disposição da tela do player.
+  // Disposições: orbit (capa com anel), vinyl (disco girando), cover (capa grande),
+  // side (barra lateral de redes), minimal (logo + play grande) e card (blocos claros).
+  const NS = 'family=Nunito+Sans:wght@400;600;700;800';
+  const SKINS = {
+    gospel: { fonts: 'family=Cinzel:wght@600;700&' + NS, layout: 'orbit' },
+    sertanejo: { fonts: 'family=Oswald:wght@500;600;700&' + NS, layout: 'orbit' },
+    poprock: { fonts: 'family=Unbounded:wght@600;700&' + NS, layout: 'orbit' },
+    raiz: { fonts: 'family=Rye&family=Lora:wght@400;600;700', layout: 'orbit' },
+    forro: { fonts: 'family=Baloo+2:wght@500;600;700;800', layout: 'orbit' },
+    classico: { fonts: '', layout: 'orbit' },
+    carbono: { fonts: 'family=Rajdhani:wght@600;700&' + NS, layout: 'cover' },
+    vinil: { fonts: 'family=Playfair+Display:ital,wght@1,700&' + NS, layout: 'vinyl' },
+    claro: { fonts: 'family=Poppins:wght@400;600;700', layout: 'card' },
+    neon: { fonts: 'family=Exo+2:wght@600;700;800&' + NS, layout: 'orbit' },
+    vidro: { fonts: 'family=Quicksand:wght@500;600;700', layout: 'minimal' },
+    notas: { fonts: 'family=Nunito:wght@600;700;800', layout: 'minimal' },
+    indigo: { fonts: 'family=Roboto:wght@400;500;700', layout: 'minimal' },
+    aurora: { fonts: 'family=Poppins:wght@400;600;700', layout: 'orbit' },
+    lider: { fonts: 'family=Montserrat:wght@500;700;800', layout: 'side' },
+    metal: { fonts: 'family=Roboto+Condensed:wght@400;700', layout: 'orbit' },
+    estrela: { fonts: 'family=Fredoka:wght@500;600;700', layout: 'orbit' },
+    turquesa: { fonts: 'family=Fjalla+One&' + NS, layout: 'side' },
+    laranja: { fonts: 'family=Poppins:wght@400;600;700', layout: 'minimal' },
+    explosao: { fonts: 'family=Archivo+Black&' + NS, layout: 'minimal' },
   };
 
   function applySkin(skin) {
     const root = document.documentElement;
-    root.dataset.skin = skin in SKIN_FONTS ? skin : 'classico';
+    root.dataset.skin = skin in SKINS ? skin : 'classico';
+    root.dataset.layout = SKINS[root.dataset.skin].layout;
     let link = document.getElementById('skinFonts');
-    const fonts = SKIN_FONTS[root.dataset.skin];
+    const fonts = SKINS[root.dataset.skin].fonts;
     if (fonts) {
       if (!link) {
         link = document.createElement('link');
@@ -1129,7 +1152,7 @@
     applySkin('classico');
     $('#appTitle').textContent = cfg.title || 'Rádio Player';
     document.title = cfg.title || 'Rádio Player';
-    $('#installBtn').hidden = true;
+    setInstallVisible(false);
     $('#mini').hidden = true;
     document.querySelectorAll('.search, .tabs, .genres, .ad-slot, #about').forEach((el) => { el.hidden = true; });
     $('#list').innerHTML = `<div class="unavailable">
@@ -1167,6 +1190,15 @@
     const st = state.stations.find((s) => s.id === wanted);
     if (st) selectStation(st, false);
     else if (state.stations.length === 1) selectStation(state.stations[0], false);
+
+    // Uma rádio só (e sem TV): o app abre direto no player, como app de rádio única.
+    if (state.stations.length === 1 && !state.tvs.length && !tvLink) {
+      document.body.classList.add('single');
+      const p = $('#player');
+      p.classList.add('open');
+      p.setAttribute('aria-hidden', 'false');
+      trackPlayerAd();
+    }
 
     maybePopup(cfg.ads && cfg.ads.popup);
   }

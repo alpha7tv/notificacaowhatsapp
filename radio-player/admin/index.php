@@ -1498,16 +1498,21 @@ elseif ($tab === 'aparencia'):
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="settings_save">
       <input type="hidden" name="back" value="<?= $back ?>">
-      <h3>Tema visual</h3>
+      <h3>Estilo do aplicativo</h3>
+      <p class="hint">Escolha um dos <?= count(RP_THEMES) ?> estilos. Rádio única abre direto no player; com várias rádios ou TV, o app mostra a lista.</p>
       <div class="themes">
         <?php foreach (RP_THEMES as $key => [$tname, $tdesc, $tbg, $taccent, $tpreview]): ?>
           <label class="theme">
             <input type="radio" name="theme" value="<?= h($key) ?>" <?= rp_theme($s) === $key ? 'checked' : '' ?>>
+            <?php if (is_file(__DIR__ . '/previews/' . $key . '.jpg')): ?>
+            <span class="theme-preview"><img src="previews/<?= h($key) ?>.jpg?v=<?= (int) filemtime(__DIR__ . '/previews/' . $key . '.jpg') ?>" alt="" loading="lazy"></span>
+            <?php else: ?>
             <span class="theme-preview" style="background: <?= h($tpreview) ?>">
               <span class="tp-art" style="border-color: <?= h($taccent) ?>"></span>
               <span class="tp-bar" style="background: <?= h($taccent) ?>"></span>
               <span class="tp-play" style="background: <?= h($taccent) ?>"></span>
             </span>
+            <?php endif; ?>
             <span class="theme-text"><b><?= h($tname) ?></b><small><?= h($tdesc) ?></small></span>
           </label>
         <?php endforeach; ?>

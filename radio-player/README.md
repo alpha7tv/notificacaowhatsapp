@@ -33,7 +33,7 @@ Cada cliente que contratar tem **o próprio app** e **o próprio painel**:
 | **Rádios** | Nome, **URL do streaming**, estilo, logo, slogan, cidade, metadados; ordem, no ar/fora do ar, botão "Testar áudio" |
 | **Estilos** | Criar, renomear, ordenar e excluir. Já vem com: Gospel, Sertanejo, Pop Rock, Sertanejo Raiz e Forró |
 | **Publicidade** | Anúncios com imagem ou texto, link (site ou WhatsApp), período de exibição, pausar e estatísticas |
-| **Aparência** | **Tema visual** (Gospel, Sertanejo, Pop Rock, Sertanejo Raiz, Forró, Clássico), imagem de fundo, nome do app, cor própria (opcional), logo (gera os ícones do app), texto "Sobre", WhatsApp/Instagram/Facebook/YouTube/site |
+| **Aparência** | **Estilo do aplicativo** (20 estilos com miniatura: Gospel, Sertanejo, Pop Rock, Sertanejo Raiz, Forró, Clássico, Carbono, Vinil, Claro, Neon, Vidro, Notas Musicais, Índigo, Noite Azul, Vermelho Líder, Metal, Estrela, Turquesa, Índigo & Laranja, Explosão), imagem de fundo, nome do app, cor própria (opcional), logo (gera os ícones do app), texto "Sobre", WhatsApp/Instagram/Facebook/YouTube/site |
 | **Conta** | Trocar usuário e senha |
 
 No **primeiro acesso** ao `/admin/` o painel pede para criar o usuário e a senha, por isso **faça isso logo

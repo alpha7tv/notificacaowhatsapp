@@ -6,6 +6,7 @@ const SHELL = [
   './',
   'index.html',
   'css/app.css?v=__BUILD__',
+  'css/styles.css?v=__BUILD__',
   'js/app.js?v=__BUILD__',
   'manifest.php',
   'icons/icon.svg',

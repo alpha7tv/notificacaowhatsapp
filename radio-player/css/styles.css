@@ -1,0 +1,429 @@
+/*
+ * Estilos de aplicativo (escolhidos no painel) e disposições da tela do player.
+ * Os 6 primeiros estilos (Gospel, Sertanejo, Pop Rock, Sertanejo Raiz, Forró, Clássico) ficam em app.css.
+ * <html data-skin="…" data-layout="orbit|vinyl|cover|side|minimal|card">
+ */
+
+/* ======================================================================
+   DISPOSIÇÕES DO PLAYER
+   ====================================================================== */
+
+/* Rádio única: o player é a tela inicial (sem botão de fechar). */
+body.single #closePlayer { display: none; }
+body:not(.single) #installBtn2 { display: none !important; }
+body.single .player-top:has(#installBtn2[hidden])::before { content: ""; width: 44px; }
+body.single .mini { display: none !important; }
+
+/* Vinil: a capa vira o selo de um disco que gira enquanto toca. */
+:root[data-layout="vinyl"] .art { animation: spin 7s linear infinite; animation-play-state: paused; }
+:root[data-layout="vinyl"] body.is-live .art { animation-play-state: running; }
+:root[data-layout="vinyl"] .art-ring {
+  inset: 0; border-radius: 50%; animation: none;
+  background:
+    radial-gradient(circle, transparent 0 30%, rgba(255, 255, 255, .06) 30.5% 31%, transparent 31.5%),
+    repeating-radial-gradient(circle, #121212 0 2px, #1d1d1d 2px 3px, #151515 3px 5px),
+    #111;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .6), inset 0 0 0 2px rgba(255, 255, 255, .06);
+}
+:root[data-layout="vinyl"] .art::after { display: none; }
+:root[data-layout="vinyl"] .art::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; z-index: 2; pointer-events: none;
+  background: conic-gradient(from 30deg, transparent 0 12%, rgba(255, 255, 255, .12) 16%, transparent 22% 62%, rgba(255, 255, 255, .08) 66%, transparent 72%);
+}
+:root[data-layout="vinyl"] .cover.lg { border-radius: 50%; transform: scale(.42); border: 0; box-shadow: none; }
+
+/* Capa grande: capa ocupando a largura, texto e play alinhados à esquerda. */
+:root[data-layout="cover"] .art { --size: min(100cqw, calc(100cqh - 8px), 460px); }
+:root[data-layout="cover"] .art-ring, :root[data-layout="cover"] .art::after { display: none; }
+:root[data-layout="cover"] .cover.lg { border-radius: 18px; }
+:root[data-layout="cover"] .meta { text-align: left; }
+:root[data-layout="cover"] .meta::before {
+  content: "Tocando agora"; display: block; font-size: .7rem; font-weight: 800; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 4px;
+}
+:root[data-layout="cover"] .bars { justify-content: flex-start; height: 26px; }
+:root[data-layout="cover"] .interact { justify-content: flex-start; }
+
+/* Barra lateral: redes sociais numa barra vertical presa à borda da tela. */
+:root[data-layout="side"] .player-inner { padding-left: 76px; }
+:root[data-layout="side"] .player-social {
+  position: absolute; left: 0; top: 50%; transform: translateY(-58%); z-index: 3;
+  flex-direction: column; gap: 6px; padding: 14px 10px; border-radius: 0 26px 26px 0;
+  background: var(--side-bg, var(--accent)); box-shadow: var(--shadow);
+}
+:root[data-layout="side"] .player-social a { background: transparent; border: 0; color: var(--side-fg, var(--accent-text)); width: 44px; height: 44px; }
+:root[data-layout="side"] .player-social svg { width: 24px; height: 24px; }
+:root[data-layout="side"] .art-ring, :root[data-layout="side"] .art::after { display: none; }
+:root[data-layout="side"] .cover.lg { border-radius: 22px; }
+
+/* Minimalista: logo, nome e um play grande. */
+:root[data-layout="minimal"] .art-ring, :root[data-layout="minimal"] .art::after { display: none; }
+:root[data-layout="minimal"] .cover.lg { box-shadow: 0 20px 50px rgba(0, 0, 0, .45); }
+:root[data-layout="minimal"] .play.lg { width: 88px; height: 88px; }
+:root[data-layout="minimal"] .bars { height: 22px; }
+:root[data-layout="minimal"] .bars i { max-width: 4px; }
+:root[data-layout="minimal"] .controls .icon-btn.lg { opacity: .75; }
+
+/* Cartões: informações em blocos claros. */
+:root[data-layout="card"] .art-ring, :root[data-layout="card"] .art::after { display: none; }
+:root[data-layout="card"] .cover.lg { border-radius: 22px; }
+:root[data-layout="card"] .meta,
+:root[data-layout="card"] .controls {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow); padding: 14px 16px;
+}
+:root[data-layout="card"] .meta { text-align: left; }
+:root[data-layout="card"] .meta::before {
+  content: "Tocando agora"; display: block; font-size: .68rem; font-weight: 800; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 4px;
+}
+
+/* Ícones com as cores das redes sociais (alguns estilos). */
+:root[data-brand-icons] .player-social a.s-whatsapp, :root[data-skin="indigo"] .player-social a.s-whatsapp { background: #25d366; color: #fff; border: 0; }
+:root[data-skin="indigo"] .player-social a.s-instagram { background: radial-gradient(circle at 30% 110%, #fdf497 0 10%, #fd5949 45%, #d6249f 60%, #285aeb 90%); color: #fff; border: 0; }
+:root[data-skin="indigo"] .player-social a.s-facebook { background: #1877f2; color: #fff; border: 0; }
+:root[data-skin="indigo"] .player-social a.s-youtube { background: #ff0000; color: #fff; border: 0; }
+:root[data-skin="indigo"] .player-social a.s-site { background: #26b5c9; color: #fff; border: 0; }
+
+/* ======================================================================
+   ESTILOS
+   ====================================================================== */
+
+/* ---------- Carbono: grafite com textura de fibra, capa grande ---------- */
+:root[data-skin="carbono"] {
+  --bg: #17191d;
+  --bg-art:
+    radial-gradient(90% 60% at 50% 0%, rgba(120, 130, 150, .35), transparent 70%),
+    radial-gradient(rgba(0, 0, 0, .55) 15%, transparent 16%) 0 0 / 10px 10px,
+    radial-gradient(rgba(0, 0, 0, .55) 15%, transparent 16%) 5px 5px / 10px 10px,
+    radial-gradient(rgba(255, 255, 255, .06) 15%, transparent 20%) 0 1px / 10px 10px,
+    radial-gradient(rgba(255, 255, 255, .06) 15%, transparent 20%) 5px 6px / 10px 10px,
+    linear-gradient(180deg, #2d3036, #17191d 70%);
+  --surface: rgba(255, 255, 255, .07);
+  --surface-2: rgba(255, 255, 255, .12);
+  --text: #f4f6f8;
+  --muted: #a9b0bb;
+  --accent: #3b82f6;
+  --accent-text: #fff;
+  --border: rgba(255, 255, 255, .1);
+  --shadow: 0 16px 40px rgba(0, 0, 0, .55);
+  --tile-radius: 14px;
+  --font-display: "Rajdhani", "Arial Narrow", Arial, sans-serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --display-transform: uppercase;
+  --display-spacing: .03em;
+  color-scheme: dark;
+}
+
+/* ---------- Vinil: madeira escura e disco girando ---------- */
+:root[data-skin="vinil"] {
+  --bg: #120c08;
+  --bg-art:
+    radial-gradient(80% 50% at 50% 30%, rgba(196, 140, 70, .28), transparent 70%),
+    linear-gradient(180deg, #2a1a10, #120c08 75%);
+  --surface: rgba(255, 236, 210, .07);
+  --surface-2: rgba(255, 236, 210, .12);
+  --text: #fbf3e6;
+  --muted: #cdb79a;
+  --accent: #d4a24c;
+  --accent-text: #1a1008;
+  --border: rgba(255, 220, 170, .14);
+  --shadow: 0 16px 44px rgba(0, 0, 0, .6);
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="vinil"] .meta h2 { font-style: italic; }
+
+/* ---------- Claro: fundo claro e cartões brancos ---------- */
+:root[data-skin="claro"] {
+  --bg: #eef1f6;
+  --bg-art: linear-gradient(180deg, #f7f9fc, #e4e9f2);
+  --surface: #ffffff;
+  --surface-2: #eef1f6;
+  --text: #0d1b3e;
+  --muted: #5d6987;
+  --accent: #0b2a6f;
+  --accent-text: #fff;
+  --border: rgba(13, 27, 62, .1);
+  --shadow: 0 10px 28px rgba(13, 27, 62, .12);
+  --font-display: "Poppins", system-ui, Arial, sans-serif;
+  --font-body: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: light;
+}
+
+/* ---------- Neon: azul-marinho com brilho azul ---------- */
+:root[data-skin="neon"] {
+  --bg: #050a22;
+  --bg-art:
+    radial-gradient(70% 45% at 50% 20%, rgba(70, 110, 255, .35), transparent 70%),
+    linear-gradient(rgba(80, 120, 255, .06) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, rgba(80, 120, 255, .06) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(180deg, #0b1440, #050a22 70%);
+  --surface: rgba(120, 150, 255, .08);
+  --surface-2: rgba(120, 150, 255, .14);
+  --text: #eef2ff;
+  --muted: #a5b1e0;
+  --accent: #4f7cff;
+  --accent-text: #fff;
+  --border: rgba(120, 150, 255, .2);
+  --shadow: 0 16px 44px rgba(0, 0, 0, .6);
+  --glow: 0 0 30px rgba(79, 124, 255, .7);
+  --ring: linear-gradient(135deg, #4f7cff, #22d3ee 50%, #a855f7);
+  --art-radius: 24px;
+  --font-display: "Exo 2", system-ui, Arial, sans-serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="neon"] .meta h2 { text-shadow: 0 0 18px rgba(79, 124, 255, .8); }
+
+/* ---------- Vidro: cinza fosco, minimalista ---------- */
+:root[data-skin="vidro"] {
+  --bg: #9aa3ad;
+  --bg-art:
+    radial-gradient(70% 50% at 20% 10%, rgba(255, 255, 255, .55), transparent 70%),
+    radial-gradient(60% 40% at 90% 90%, rgba(60, 80, 120, .35), transparent 70%),
+    linear-gradient(160deg, #c9ced5, #7d8792);
+  --surface: rgba(255, 255, 255, .32);
+  --surface-2: rgba(255, 255, 255, .45);
+  --text: #11192b;
+  --muted: #3c4658;
+  --accent: #0e2a6b;
+  --accent-text: #fff;
+  --border: rgba(255, 255, 255, .45);
+  --shadow: 0 16px 40px rgba(20, 30, 50, .25);
+  --art-radius: 28px;
+  --font-display: "Quicksand", system-ui, Arial, sans-serif;
+  --font-body: "Quicksand", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: light;
+}
+
+/* ---------- Notas Musicais: azul com notas espalhadas ---------- */
+:root[data-skin="notas"] {
+  --bg: #04121f;
+  --bg-art:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'%3E%3Cg fill='%23fff' fill-opacity='.55'%3E%3Cg transform='translate(40 60) rotate(-18)'%3E%3Cellipse cx='0' cy='22' rx='8' ry='6'/%3E%3Crect x='6' y='-12' width='2.6' height='34'/%3E%3Cpath d='M8.6-12c6 4 12 6 10 16-2-5-5-7-10-8z'/%3E%3C/g%3E%3Cg transform='translate(170 40) rotate(14)'%3E%3Cellipse cx='0' cy='26' rx='7' ry='5'/%3E%3Cellipse cx='24' cy='20' rx='7' ry='5'/%3E%3Crect x='5' y='-6' width='2.4' height='32'/%3E%3Crect x='29' y='-12' width='2.4' height='32'/%3E%3Cpath d='M5-6 31-12v6L5 0z'/%3E%3C/g%3E%3Cg transform='translate(120 160) rotate(-8) scale(.8)'%3E%3Cellipse cx='0' cy='22' rx='8' ry='6'/%3E%3Crect x='6' y='-12' width='2.6' height='34'/%3E%3Cpath d='M8.6-12c6 4 12 6 10 16-2-5-5-7-10-8z'/%3E%3C/g%3E%3Cg transform='translate(25 190) rotate(22) scale(.7)'%3E%3Cellipse cx='0' cy='26' rx='7' ry='5'/%3E%3Cellipse cx='24' cy='20' rx='7' ry='5'/%3E%3Crect x='5' y='-6' width='2.4' height='32'/%3E%3Crect x='29' y='-12' width='2.4' height='32'/%3E%3Cpath d='M5-6 31-12v6L5 0z'/%3E%3C/g%3E%3Cg transform='translate(210 150) rotate(30) scale(.6)'%3E%3Cellipse cx='0' cy='22' rx='8' ry='6'/%3E%3Crect x='6' y='-12' width='2.6' height='34'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") 0 0 / 240px 240px,
+    radial-gradient(90% 60% at 85% 30%, rgba(0, 170, 255, .55), transparent 65%),
+    radial-gradient(60% 40% at 10% 90%, rgba(0, 120, 220, .35), transparent 70%),
+    linear-gradient(160deg, #06243f, #04121f 70%);
+  --surface: rgba(255, 255, 255, .08);
+  --surface-2: rgba(255, 255, 255, .14);
+  --text: #ffffff;
+  --muted: #c3dcf0;
+  --accent: #19b3ff;
+  --accent-text: #04121f;
+  --border: rgba(255, 255, 255, .14);
+  --shadow: 0 18px 44px rgba(0, 0, 0, .55);
+  --play-bg: #ffffff;
+  --play-fg: #04121f;
+  --play-shadow: 0 10px 34px rgba(25, 179, 255, .45);
+  --art-radius: 26px;
+  --font-display: "Nunito", system-ui, Arial, sans-serif;
+  --font-body: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="notas"] .bars i { background: #fff; }
+
+/* ---------- Índigo: roxo-azulado liso, play vermelho, ícones coloridos ---------- */
+:root[data-skin="indigo"] {
+  --bg: #2b2963;
+  --bg-art: radial-gradient(70% 45% at 50% 35%, rgba(255, 255, 255, .06), transparent 70%);
+  --surface: rgba(255, 255, 255, .08);
+  --surface-2: rgba(255, 255, 255, .14);
+  --text: #ffffff;
+  --muted: #b9b7e3;
+  --accent: #19c3d9;
+  --accent-text: #0d0c2e;
+  --border: rgba(255, 255, 255, .12);
+  --shadow: 0 14px 36px rgba(0, 0, 0, .4);
+  --play-bg: #f01d1d;
+  --play-fg: #fff;
+  --play-shadow: 0 10px 28px rgba(240, 29, 29, .45);
+  --art-radius: 0;
+  --font-display: "Roboto", system-ui, Arial, sans-serif;
+  --font-body: "Roboto", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="indigo"] .cover.lg { object-fit: contain; background: transparent; box-shadow: none; }
+
+/* ---------- Noite Azul: azul profundo com brilho laranja, logo em círculo branco ---------- */
+:root[data-skin="aurora"] {
+  --bg: #0b1433;
+  --bg-art:
+    radial-gradient(60% 40% at 100% 100%, rgba(255, 120, 30, .45), transparent 70%),
+    radial-gradient(50% 35% at 0% 0%, rgba(80, 110, 255, .35), transparent 70%),
+    linear-gradient(170deg, #142257, #0b1433 70%);
+  --surface: rgba(255, 255, 255, .07);
+  --surface-2: rgba(255, 255, 255, .13);
+  --text: #ffffff;
+  --muted: #b8c2e6;
+  --accent: #ff5a1f;
+  --accent-text: #fff;
+  --border: rgba(255, 255, 255, .12);
+  --shadow: 0 16px 40px rgba(0, 0, 0, .5);
+  --ring: #ffffff;
+  --ring-width: 8px;
+  --art-radius: 50%;
+  --font-display: "Poppins", system-ui, Arial, sans-serif;
+  --font-body: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="aurora"] .cover.lg { background: #fff; object-fit: contain; }
+:root[data-skin="aurora"] .pill { background: linear-gradient(90deg, #ff3d2e, #ffa31a); color: #fff; border: 0; }
+:root[data-skin="aurora"] .pill svg { color: #fff; }
+:root[data-skin="aurora"] .pill[data-interact="chat"] { background: #22c55e; }
+
+/* ---------- Vermelho Líder: vermelho vivo, barra lateral de redes ---------- */
+:root[data-skin="lider"] {
+  --bg: #d10a12;
+  --bg-art:
+    radial-gradient(circle at 18px 18px, rgba(255, 255, 255, .25) 2px, transparent 3px) 0 0 / 22px 22px,
+    linear-gradient(160deg, #ef1c24, #b5050c 75%);
+  --surface: rgba(255, 255, 255, .14);
+  --surface-2: rgba(255, 255, 255, .2);
+  --text: #ffffff;
+  --muted: #ffd6d7;
+  --accent: #7a0006;
+  --accent-text: #ffffff;
+  --border: rgba(255, 255, 255, .2);
+  --shadow: 0 16px 40px rgba(80, 0, 0, .45);
+  --side-bg: #ffffff;
+  --side-fg: #d10a12;
+  --art-radius: 0;
+  --font-display: "Montserrat", system-ui, Arial, sans-serif;
+  --font-body: "Montserrat", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="lider"] .cover.lg { background: #fff; object-fit: contain; padding: 14px; border-radius: 6px; }
+:root[data-skin="lider"] .play.lg { width: 92px; height: 92px; }
+
+/* ---------- Metal: aço escovado, botões contornados ---------- */
+:root[data-skin="metal"] {
+  --bg: #9da3a8;
+  --bg-art:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .07) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, .04) 0 2px, transparent 2px 5px),
+    linear-gradient(180deg, #d9dcde, #8e959b);
+  --surface: rgba(255, 255, 255, .35);
+  --surface-2: rgba(255, 255, 255, .5);
+  --text: #1d2125;
+  --muted: #464c53;
+  --accent: #26292d;
+  --accent-text: #f1f2f3;
+  --border: rgba(0, 0, 0, .14);
+  --shadow: 0 12px 30px rgba(0, 0, 0, .3);
+  --ring: linear-gradient(145deg, #f5f6f7, #6f767c);
+  --ring-width: 6px;
+  --art-radius: 8px;
+  --play-bg: transparent;
+  --play-fg: #1d2125;
+  --play-border: 3px solid #1d2125;
+  --play-shadow: none;
+  --font-display: "Roboto Condensed", "Arial Narrow", Arial, sans-serif;
+  --font-body: "Roboto Condensed", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --display-transform: uppercase;
+  color-scheme: light;
+}
+
+/* ---------- Estrela: roxo vibrante com raios ---------- */
+:root[data-skin="estrela"] {
+  --bg: #4b0f8c;
+  --bg-art:
+    repeating-conic-gradient(from 0deg at 50% 32%, rgba(255, 255, 255, .07) 0 6deg, transparent 6deg 14deg),
+    radial-gradient(60% 40% at 50% 32%, rgba(255, 90, 220, .55), transparent 70%),
+    linear-gradient(180deg, #6a1bb8, #3a0a70 75%);
+  --surface: rgba(255, 255, 255, .1);
+  --surface-2: rgba(255, 255, 255, .16);
+  --text: #ffffff;
+  --muted: #e2cdfb;
+  --accent: #ffd400;
+  --accent-text: #3a0a70;
+  --border: rgba(255, 255, 255, .16);
+  --shadow: 0 16px 40px rgba(30, 0, 60, .5);
+  --glow: 0 0 30px rgba(255, 212, 0, .5);
+  --ring: conic-gradient(from 0deg, #ffd400, #ff4fd8, #ffd400, #ff4fd8, #ffd400);
+  --ring-anim: spin;
+  --art-radius: 50%;
+  --font-display: "Fredoka", system-ui, Arial, sans-serif;
+  --font-body: "Fredoka", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+
+/* ---------- Turquesa: marinho com faixas turquesa, barra lateral à direita ---------- */
+:root[data-skin="turquesa"] {
+  --bg: #0b2557;
+  --bg-art:
+    linear-gradient(155deg, transparent 0 58%, rgba(34, 211, 238, .22) 58% 72%, transparent 72%),
+    linear-gradient(25deg, transparent 0 70%, rgba(125, 211, 252, .18) 70% 84%, transparent 84%),
+    linear-gradient(180deg, #123172, #0b2557 70%);
+  --surface: rgba(255, 255, 255, .08);
+  --surface-2: rgba(255, 255, 255, .14);
+  --text: #ffffff;
+  --muted: #b5d3f2;
+  --accent: #22d3ee;
+  --accent-text: #0b2557;
+  --border: rgba(255, 255, 255, .14);
+  --shadow: 0 16px 40px rgba(0, 0, 0, .45);
+  --side-bg: rgba(255, 255, 255, .95);
+  --side-fg: #0b2557;
+  --art-radius: 22px;
+  --font-display: "Fjalla One", "Arial Narrow", Arial, sans-serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --display-transform: uppercase;
+  --display-spacing: .04em;
+  color-scheme: dark;
+}
+:root[data-skin="turquesa"][data-layout="side"] .player-inner { padding-left: 22px; padding-right: 76px; }
+:root[data-skin="turquesa"][data-layout="side"] .player-social { left: auto; right: 0; border-radius: 26px 0 0 26px; }
+:root[data-skin="turquesa"] .player-social a.s-facebook { color: #1877f2; }
+:root[data-skin="turquesa"] .player-social a.s-youtube { color: #ff0000; }
+:root[data-skin="turquesa"] .player-social a.s-whatsapp { color: #25d366; }
+:root[data-skin="turquesa"] .player-social a.s-instagram { color: #d6249f; }
+
+/* ---------- Índigo & Laranja: roxo-azulado com rodapé laranja ---------- */
+:root[data-skin="laranja"] {
+  --bg: #2b2a9a;
+  --bg-art:
+    radial-gradient(70% 45% at 50% 35%, rgba(130, 140, 255, .35), transparent 70%),
+    linear-gradient(180deg, #3533b0, #23217e 80%);
+  --surface: rgba(255, 255, 255, .1);
+  --surface-2: rgba(255, 255, 255, .16);
+  --text: #ffffff;
+  --muted: #cfd0ff;
+  --accent: #ff7a00;
+  --accent-text: #fff;
+  --border: rgba(255, 255, 255, .14);
+  --shadow: 0 16px 40px rgba(10, 10, 60, .45);
+  --play-bg: rgba(255, 255, 255, .92);
+  --play-fg: #2b2a9a;
+  --play-shadow: 0 10px 30px rgba(0, 0, 0, .3);
+  --art-radius: 24px;
+  --font-display: "Poppins", system-ui, Arial, sans-serif;
+  --font-body: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="laranja"] .player-inner { background: linear-gradient(transparent calc(100% - 92px), rgba(255, 122, 0, .95) calc(100% - 92px)); }
+:root[data-skin="laranja"] .player-social a { background: transparent; border-color: rgba(255, 255, 255, .5); color: #fff; }
+:root[data-skin="laranja"] .cover.lg { background: #fff; object-fit: contain; }
+
+/* ---------- Explosão: preto com rede de pontos laranja, destaque amarelo ---------- */
+:root[data-skin="explosao"] {
+  --bg: #050505;
+  --bg-art:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Cg stroke='%23ff5a1f' stroke-opacity='.35' stroke-width='1'%3E%3Cpath d='M20 40 90 70 150 30 230 80 280 40M90 70 70 150 150 120 230 80 250 170M70 150 30 230 120 250 150 120 210 220 280 260M120 250 210 220 250 170'/%3E%3C/g%3E%3Cg fill='%23ff6a2a'%3E%3Ccircle cx='20' cy='40' r='3'/%3E%3Ccircle cx='90' cy='70' r='4'/%3E%3Ccircle cx='150' cy='30' r='2.5'/%3E%3Ccircle cx='230' cy='80' r='4'/%3E%3Ccircle cx='280' cy='40' r='2.5'/%3E%3Ccircle cx='70' cy='150' r='3'/%3E%3Ccircle cx='150' cy='120' r='5'/%3E%3Ccircle cx='250' cy='170' r='3'/%3E%3Ccircle cx='30' cy='230' r='2.5'/%3E%3Ccircle cx='120' cy='250' r='4'/%3E%3Ccircle cx='210' cy='220' r='3'/%3E%3Ccircle cx='280' cy='260' r='2.5'/%3E%3C/g%3E%3Cg fill='%23ffd27a' fill-opacity='.5'%3E%3Ccircle cx='45' cy='95' r='1.2'/%3E%3Ccircle cx='190' cy='60' r='1.2'/%3E%3Ccircle cx='110' cy='195' r='1.2'/%3E%3Ccircle cx='265' cy='120' r='1.2'/%3E%3Ccircle cx='175' cy='280' r='1.2'/%3E%3C/g%3E%3C/svg%3E") 0 0 / 300px 300px,
+    radial-gradient(80% 50% at 60% 25%, rgba(255, 80, 20, .25), transparent 70%);
+  --surface: rgba(255, 255, 255, .07);
+  --surface-2: rgba(255, 255, 255, .12);
+  --text: #ffc800;
+  --muted: #ffe59a;
+  --accent: #ffc800;
+  --accent-text: #111;
+  --border: rgba(255, 200, 0, .2);
+  --shadow: 0 16px 44px rgba(0, 0, 0, .7);
+  --glow: 0 0 30px rgba(255, 200, 0, .45);
+  --art-radius: 0;
+  --font-display: "Archivo Black", Impact, Arial, sans-serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="explosao"] .cover.lg { object-fit: contain; background: transparent; box-shadow: none; filter: drop-shadow(0 12px 30px rgba(255, 90, 20, .35)); }
+:root[data-skin="explosao"] .station strong, :root[data-skin="explosao"] .tv-card strong { color: #fff; }
