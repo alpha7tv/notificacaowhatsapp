@@ -1,0 +1,41 @@
+{
+  "title": "Rádio Player",
+  "accent": "#e5484d",
+  "stations": [
+    {
+      "id": "groove-salad",
+      "name": "SomaFM Groove Salad",
+      "stream": "https://ice1.somafm.com/groovesalad-128-mp3",
+      "logo": "https://somafm.com/img3/groovesalad-400.jpg",
+      "genre": "Eletrônica",
+      "city": "San Francisco",
+      "slogan": "Ambient e downtempo"
+    },
+    {
+      "id": "drone-zone",
+      "name": "SomaFM Drone Zone",
+      "stream": "https://ice1.somafm.com/dronezone-128-mp3",
+      "logo": "https://somafm.com/img3/dronezone-400.jpg",
+      "genre": "Ambient",
+      "city": "San Francisco",
+      "slogan": "Texturas atmosféricas"
+    },
+    {
+      "id": "indie-pop",
+      "name": "SomaFM Indie Pop Rocks!",
+      "stream": "https://ice1.somafm.com/indiepop-128-mp3",
+      "logo": "https://somafm.com/img3/indiepop-400.jpg",
+      "genre": "Pop/Rock",
+      "city": "San Francisco",
+      "slogan": "Indie pop clássico e novo"
+    },
+    {
+      "id": "radio-paradise",
+      "name": "Radio Paradise",
+      "stream": "https://stream.radioparadise.com/aac-128",
+      "genre": "Pop/Rock",
+      "city": "Califórnia",
+      "slogan": "Mix eclético sem comerciais"
+    }
+  ]
+}
