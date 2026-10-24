@@ -247,7 +247,8 @@ function np_artwork(string $artist, string $title): string
         return (string) $cache[$key];
     }
     $art = '';
-    $term = trim($artist . ' ' . $title);
+    // Busca sem o que está entre parênteses/colchetes ("(15 Anos)", "(Ao Vivo)") para achar mais capas.
+    $term = trim((string) preg_replace('~\s*[\[(][^\])]*[\])]~u', '', $artist . ' ' . $title));
     if (mb_strlen($term) >= 3) {
         $body = np_http_get('https://itunes.apple.com/search?' . http_build_query(['term' => $term, 'media' => 'music', 'entity' => 'song', 'limit' => 1, 'country' => 'BR']));
         $res = $body ? json_decode($body, true) : null;
@@ -291,7 +292,7 @@ function np_now(array $station, bool $withArt, bool $force = false): array
         return $cur;
     }
     try {
-        $song = np_detect((string) $station['stream'], (string) ($station['metadata'] ?? '')) ?? '';
+        $song = np_tidy(np_detect((string) $station['stream'], (string) ($station['metadata'] ?? '')) ?? '');
         // Alguns servidores mandam lixo ou só o nome da rádio quando não há música.
         if (mb_strlen($song) < 2 || preg_match('~^(unknown|desconhecido|-|\s*)$~i', $song)) {
             $song = '';
@@ -339,7 +340,22 @@ function np_clean_pushed(string $song): string
         $song = (string) preg_replace('~^.*[\\\\/]~', '', $song);
     }
     $song = (string) preg_replace('~\.(mp3|wav|wma|ogg|flac|aac|m4a|mp2)$~i', '', $song);
-    $song = trim((string) preg_replace('~^\d{1,3}\s*[-._)]\s*~', '', $song)); // "01 - Música"
+    $song = trim((string) preg_replace('~^\d{1,4}\s*[-._)]\s*~u', '', $song)); // "01 - Música", "168 - Música"
+    return np_tidy($song);
+}
+
+/** Tira sufixos de vídeo ("[Vídeo Oficial]", "(Clipe Oficial)", "| Lyric") e ignora vinhetas/comerciais. */
+function np_tidy(string $song): string
+{
+    $junk = '(v[ií]deo|video|clipe?|clip|official|oficial|lyrics?|letra|legendad[oa]|visualizer|audio|áudio|hd|hq|4k|1080p|720p|mv)';
+    $song = (string) preg_replace('~\s*[\[(][^\])]*\b' . $junk . '\b[^\])]*[\])]~iu', '', $song);
+    $song = (string) preg_replace('~\s*[|｜]\s*.*$~u', '', $song);
+    $song = (string) preg_replace('~\s+(hd|hq|4k|1080p|720p)$~iu', '', $song);
+    $song = trim((string) preg_replace('~\s{2,}~u', ' ', $song), " \t-–—_");
+    // Vinheta, spot, comercial, hora certa: não é música.
+    if ($song === '' || preg_match('~^(vinhetas?|spots?|comerciais?|comercial|propagandas?|hora certa|chamadas?|jingles?|id|intervalo)\b~iu', $song)) {
+        return '';
+    }
     return mb_substr($song, 0, 200);
 }
 

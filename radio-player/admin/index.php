@@ -216,51 +216,79 @@ if (isset($_GET['ajax'])) {
 # Rádio Player — envia a música tocando no Zara Radio para o app de "{$st['name']}".
 # Deixe esta janela aberta enquanto a rádio estiver no ar.
 
-# 1) Ajuste aqui o arquivo que o Zara Radio grava com a música atual:
+# O script lê a música direto da janela do Zara Radio ("NO AR - Reproduzindo agora").
+# Se o Zara estiver configurado para gravar a música atual num arquivo, ele também usa:
 \$arquivo = "C:\\ZaraRadio\\currentsong.txt"
 
-# 2) Não altere daqui para baixo.
+# Não altere daqui para baixo.
 \$url   = "{$push}"
 \$id    = "{$st['id']}"
 \$chave = "{$st['np_key']}"
 
 # Funciona do PowerShell 2.0 (Windows 7) em diante.
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]3072 } catch { }
+try { Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes } catch { }
+
+# Lê o texto que fica embaixo de "NO AR - Reproduzindo agora" na janela do Zara.
+function Ler-Zara {
+    \$p = Get-Process ZaraRadio -ErrorAction SilentlyContinue | Where-Object { \$_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    if (-not \$p) { return "" }
+    \$janela = [Windows.Automation.AutomationElement]::FromHandle(\$p.MainWindowHandle)
+    \$itens = \$janela.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    \$cabecalho = \$null
+    \$candidatos = @()
+    foreach (\$e in \$itens) {
+        \$nome = ([string]\$e.Current.Name).Trim()
+        if (\$nome -eq "") { continue }
+        \$r = \$e.Current.BoundingRectangle
+        if (\$nome -match 'Reproduzindo agora|Reproduciendo|Now playing|Playing now') { \$cabecalho = \$r; continue }
+        if (\$nome -match '^(panel|splitter|vazio|repetir|L|R|\d+|pr[oó]xim.*|fim da reprodu.*|tempo restante|dura[cç][aã]o.*)$') { continue }
+        if (\$nome -match '^\d{1,2}:\d{2}' -or \$nome -match '(ºC|°C|%)$' -or \$nome -match '^(seg|ter|qua|qui|sex|s[aá]b|dom)\b') { continue }
+        \$candidatos += New-Object PSObject -Property @{ Nome = \$nome; Topo = \$r.Top; Esq = \$r.Left; Dir = \$r.Right }
+    }
+    if (\$candidatos.Count -eq 0) { return "" }
+    if (\$cabecalho) {
+        \$abaixo = @(\$candidatos | Where-Object { \$_.Topo -ge \$cabecalho.Top -and \$_.Esq -lt \$cabecalho.Right -and \$_.Dir -gt \$cabecalho.Left } | Sort-Object Topo)
+        if (\$abaixo.Count -gt 0) { return \$abaixo[0].Nome }
+    }
+    return \$candidatos[0].Nome
+}
+
 \$ultima = ""
 \$enviadoEm = Get-Date "2000-01-01"
 Write-Host "Enviando a música tocando para o app. Deixe esta janela aberta." -ForegroundColor Green
-Write-Host "Arquivo: \$arquivo   (PowerShell \$(\$PSVersionTable.PSVersion))"
-\$mostrouConteudo = \$false
+Write-Host "(PowerShell \$(\$PSVersionTable.PSVersion))"
+\$mostrou = \$false
 while (\$true) {
     try {
+        \$musica = ""
         if (Test-Path -LiteralPath \$arquivo) {
-            # O Zara pode gravar mais de uma linha: junta as linhas que não estão vazias.
             \$linhas = @(Get-Content -LiteralPath \$arquivo -Encoding Default | ForEach-Object { ([string]\$_ -replace "`0", "").Trim() } | Where-Object { \$_ -ne "" })
             \$musica = [string]::Join("`n", \$linhas)
-            if (-not \$mostrouConteudo) {
-                Write-Host "Conteúdo do arquivo agora: \$([string]::Join(' | ', \$linhas))" -ForegroundColor Cyan
-                \$mostrouConteudo = \$true
+        }
+        \$fonte = "arquivo"
+        if (\$musica -eq "") { \$musica = Ler-Zara; \$fonte = "janela do Zara" }
+        if (-not \$mostrou) {
+            if (\$musica -ne "") { Write-Host "Lido da \$fonte : \$musica" -ForegroundColor Cyan }
+            else { Write-Host "Não encontrei a música (o Zara Radio está aberto e tocando?)" -ForegroundColor Yellow }
+            \$mostrou = \$true
+        }
+        \$repetir = ((Get-Date) - \$enviadoEm).TotalSeconds -ge 120
+        if (\$musica -ne "" -and (\$musica -ne \$ultima -or \$repetir)) {
+            \$web = New-Object System.Net.WebClient
+            \$web.Encoding = [System.Text.Encoding]::UTF8
+            \$dados = New-Object System.Collections.Specialized.NameValueCollection
+            \$dados.Add("id", \$id)
+            \$dados.Add("key", \$chave)
+            \$dados.Add("song", \$musica)
+            \$resposta = [System.Text.Encoding]::UTF8.GetString(\$web.UploadValues(\$url, "POST", \$dados))
+            if (\$musica -ne \$ultima) {
+                \$nome = "(vinheta/comercial: o app mostra o nome da rádio)"
+                if (\$resposta -match '"song":"([^"]+)"') { \$nome = \$matches[1] }
+                Write-Host (Get-Date -Format "HH:mm:ss") " no app: " \$nome
             }
-            \$repetir = ((Get-Date) - \$enviadoEm).TotalSeconds -ge 120
-            if (\$musica -ne "" -and (\$musica -ne \$ultima -or \$repetir)) {
-                \$web = New-Object System.Net.WebClient
-                \$web.Encoding = [System.Text.Encoding]::UTF8
-                \$dados = New-Object System.Collections.Specialized.NameValueCollection
-                \$dados.Add("id", \$id)
-                \$dados.Add("key", \$chave)
-                \$dados.Add("song", \$musica)
-                \$resposta = [System.Text.Encoding]::UTF8.GetString(\$web.UploadValues(\$url, "POST", \$dados))
-                if (\$musica -ne \$ultima) {
-                    \$nome = \$musica
-                    if (\$resposta -match '"song":"([^"]*)"') { \$nome = \$matches[1] }
-                    Write-Host (Get-Date -Format "HH:mm:ss") " no app: " \$nome
-                }
-                \$ultima = \$musica
-                \$enviadoEm = Get-Date
-            }
-        } else {
-            Write-Host "Arquivo não encontrado: \$arquivo  (confira o caminho na linha 5 deste script)" -ForegroundColor Yellow
-            Start-Sleep -Seconds 25
+            \$ultima = \$musica
+            \$enviadoEm = Get-Date
         }
     } catch {
         Write-Host "Falha ao enviar (vou tentar de novo): \$(\$_.Exception.Message)" -ForegroundColor Red
@@ -1262,19 +1290,17 @@ elseif ($tab === 'radios'):
     <?php if ($st['id']): ?>
     <div class="card form np-push">
       <h3>Música tocando pelo computador da rádio (Zara Radio)</h3>
-      <p class="hint">Use se o nome da música não aparecer pelo streaming. Um script lê o arquivo que o Zara grava com a música atual e envia direto para o app, a cada troca de música. Funciona com qualquer programa de transmissão.</p>
+      <p class="hint">Use se o nome da música não aparecer pelo streaming. Um script no computador da rádio lê a música que está tocando no Zara Radio e envia direto para o app, a cada troca. Funciona com qualquer programa de transmissão.</p>
       <?php if (empty($st['np_key'])): ?>
         <?= action_btn('np_key_new', $st['id'], 'Ativar envio pelo computador da rádio', 'btn primary') ?>
       <?php else: ?>
         <ol class="steps">
-          <li>No Zara Radio, ative a gravação da música atual em arquivo e anote o caminho (ex.: <code>C:\ZaraRadio\currentsong.txt</code>).</li>
           <li>Baixe os dois arquivos e salve <b>na mesma pasta</b> no computador da rádio:
             <div class="actions">
               <a class="btn primary" href="?ajax=np_script&amp;id=<?= h($st['id']) ?>&amp;f=ps1">⬇ musica-no-app.ps1</a>
               <a class="btn" href="?ajax=np_script&amp;id=<?= h($st['id']) ?>&amp;f=bat">⬇ iniciar-musica-no-app.bat</a>
             </div></li>
-          <li>Abra o <b>musica-no-app.ps1</b> no Bloco de Notas e troque o caminho da <b>linha 5</b> pelo arquivo do Zara. Salve.</li>
-          <li>Dê dois cliques em <b>iniciar-musica-no-app.bat</b> e deixe a janela aberta. A cada música, ela mostra o nome enviado.</li>
+          <li>Com o Zara Radio aberto e tocando, dê dois cliques em <b>iniciar-musica-no-app.bat</b> e deixe a janela aberta. O script lê a música na tela do Zara ("NO AR - Reproduzindo agora") e, a cada troca, mostra o nome enviado.</li>
           <li>Para iniciar junto com o Windows: copie o <b>.bat</b> para a pasta que abre com <code>Win + R</code> → <code>shell:startup</code>.</li>
         </ol>
         <p class="hint">A chave é secreta e só serve para esta rádio. Se vazar, gere outra (o script antigo para de funcionar).
