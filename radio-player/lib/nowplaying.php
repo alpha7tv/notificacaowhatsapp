@@ -328,8 +328,13 @@ function np_now(array $station, bool $withArt, bool $force = false): array
 /** Limpa o que o programa de automação grava ("C:\\Musicas\\Artista - Musica.mp3" → "Artista - Musica"). */
 function np_clean_pushed(string $song): string
 {
-    $song = np_utf8(str_replace("\0", '', $song));
-    $song = trim((string) strtok($song, "\r\n"));
+    $lines = array_values(array_filter(array_map('np_utf8', preg_split('~\r\n|\r|\n~', str_replace("\0", '', $song))), 'strlen'));
+    $song = $lines[0] ?? '';
+    // Duas linhas curtas sem " - " (ex.: artista numa linha, música na outra) viram "artista - música".
+    if (count($lines) >= 2 && !str_contains($lines[0], ' - ') && !str_contains($lines[1], ' - ')
+        && mb_strlen($lines[0]) <= 60 && mb_strlen($lines[1]) <= 80 && !preg_match('~[\\\\/]~', $lines[0])) {
+        $song = $lines[0] . ' - ' . $lines[1];
+    }
     if (preg_match('~[\\\\/]~', $song)) {
         $song = (string) preg_replace('~^.*[\\\\/]~', '', $song);
     }

@@ -224,19 +224,37 @@ if (isset($_GET['ajax'])) {
 \$id    = "{$st['id']}"
 \$chave = "{$st['np_key']}"
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Funciona do PowerShell 2.0 (Windows 7) em diante.
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]3072 } catch { }
 \$ultima = ""
 \$enviadoEm = Get-Date "2000-01-01"
 Write-Host "Enviando a música tocando para o app. Deixe esta janela aberta." -ForegroundColor Green
-Write-Host "Arquivo: \$arquivo"
+Write-Host "Arquivo: \$arquivo   (PowerShell \$(\$PSVersionTable.PSVersion))"
+\$mostrouConteudo = \$false
 while (\$true) {
     try {
         if (Test-Path -LiteralPath \$arquivo) {
-            \$musica = ((Get-Content -LiteralPath \$arquivo -Raw -Encoding Default) -replace "`0", "").Trim()
+            # O Zara pode gravar mais de uma linha: junta as linhas que não estão vazias.
+            \$linhas = @(Get-Content -LiteralPath \$arquivo -Encoding Default | ForEach-Object { ([string]\$_ -replace "`0", "").Trim() } | Where-Object { \$_ -ne "" })
+            \$musica = [string]::Join("`n", \$linhas)
+            if (-not \$mostrouConteudo) {
+                Write-Host "Conteúdo do arquivo agora: \$([string]::Join(' | ', \$linhas))" -ForegroundColor Cyan
+                \$mostrouConteudo = \$true
+            }
             \$repetir = ((Get-Date) - \$enviadoEm).TotalSeconds -ge 120
-            if (\$musica -and (\$musica -ne \$ultima -or \$repetir)) {
-                \$r = Invoke-RestMethod -Uri \$url -Method Post -Body @{ id = \$id; key = \$chave; song = \$musica }
-                if (\$musica -ne \$ultima) { Write-Host (Get-Date -Format "HH:mm:ss") " " \$r.song }
+            if (\$musica -ne "" -and (\$musica -ne \$ultima -or \$repetir)) {
+                \$web = New-Object System.Net.WebClient
+                \$web.Encoding = [System.Text.Encoding]::UTF8
+                \$dados = New-Object System.Collections.Specialized.NameValueCollection
+                \$dados.Add("id", \$id)
+                \$dados.Add("key", \$chave)
+                \$dados.Add("song", \$musica)
+                \$resposta = [System.Text.Encoding]::UTF8.GetString(\$web.UploadValues(\$url, "POST", \$dados))
+                if (\$musica -ne \$ultima) {
+                    \$nome = \$musica
+                    if (\$resposta -match '"song":"([^"]*)"') { \$nome = \$matches[1] }
+                    Write-Host (Get-Date -Format "HH:mm:ss") " no app: " \$nome
+                }
                 \$ultima = \$musica
                 \$enviadoEm = Get-Date
             }
