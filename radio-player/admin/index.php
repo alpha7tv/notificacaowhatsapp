@@ -725,24 +725,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
             case 'genre_add':
                 $name = rp_clean($_POST['name'] ?? '', 40);
                 if ($name === '') {
-                    throw new RuntimeException('Informe o nome do estilo.');
+                    throw new RuntimeException('Informe o nome do gênero.');
                 }
                 rp_update_config(function ($cfg) use ($name) {
                     foreach ($cfg['genres'] as $g) {
                         if (mb_strtolower($g['name']) === mb_strtolower($name)) {
-                            throw new RuntimeException('Esse estilo já existe.');
+                            throw new RuntimeException('Esse gênero já existe.');
                         }
                     }
                     $cfg['genres'][] = ['id' => rp_id(), 'name' => $name];
                     return $cfg;
                 });
-                flash('Estilo adicionado.');
+                flash('Gênero adicionado.');
                 go('tab=estilos');
 
             case 'genre_rename':
                 $name = rp_clean($_POST['name'] ?? '', 40);
                 if ($name === '') {
-                    throw new RuntimeException('Informe o nome do estilo.');
+                    throw new RuntimeException('Informe o nome do gênero.');
                 }
                 rp_update_config(function ($cfg) use ($name) {
                     $i = find_index($cfg['genres'], (string) $_POST['id']);
@@ -751,7 +751,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                     }
                     return $cfg;
                 });
-                flash('Estilo renomeado.');
+                flash('Gênero renomeado.');
                 go('tab=estilos');
 
             case 'genre_delete':
@@ -768,7 +768,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                     }
                     return $cfg;
                 });
-                flash('Estilo excluído. As rádios desse estilo ficaram sem estilo.');
+                flash('Gênero excluído. As rádios desse gênero ficaram sem gênero.');
                 go('tab=estilos');
 
             case 'genre_move':
@@ -995,7 +995,7 @@ if ($tenant !== null) {
     if ($tvAllowed) {
         $tabs['tv'] = 'Web TV';
     }
-    $tabs += ['pedidos' => 'Pedidos', 'chat' => 'Chat', 'estilos' => 'Estilos', 'publicidade' => 'Publicidade', 'aparencia' => 'Aparência'];
+    $tabs += ['pedidos' => 'Pedidos', 'chat' => 'Chat', 'aparencia' => 'Modelo e aparência', 'estilos' => 'Gêneros musicais', 'publicidade' => 'Publicidade'];
     if ($role === 'client') {
         $tabs['conta'] = 'Senha';
     }
@@ -1103,7 +1103,7 @@ if ($tab === 'inicio'):
       <a class="stat" href="?tab=radios"><strong><?= count($activeSt) ?></strong><span>rádios no ar<?= count($cfg['stations']) > count($activeSt) ? ' (de ' . count($cfg['stations']) . ')' : '' ?></span></a>
       <?php if ($tvAllowed): ?><a class="stat" href="?tab=tv"><strong><?= count(array_filter($cfg['tvs'], fn ($x) => !empty($x['active']))) ?></strong><span>canais de TV no ar</span></a><?php endif; ?>
       <a class="stat" href="?tab=pedidos&f=new"><strong><?= unread_requests()['unread'] ?></strong><span>pedidos não lidos</span></a>
-      <a class="stat" href="?tab=estilos"><strong><?= count($cfg['genres']) ?></strong><span>estilos</span></a>
+      <a class="stat" href="?tab=aparencia"><strong><?= h(RP_THEMES[rp_theme($s)][0]) ?></strong><span>modelo do app · trocar</span></a>
       <a class="stat" href="?tab=publicidade"><strong><?= count($liveAds) ?></strong><span>anúncios no ar</span></a>
       <a class="stat" href="?tab=publicidade"><strong><?= number_format($clicks, 0, ',', '.') ?></strong><span>cliques em anúncios · <?= number_format($views, 0, ',', '.') ?> exibições</span></a>
     </div>
@@ -1139,12 +1139,12 @@ elseif ($tab === 'radios'):
       <input type="hidden" name="id" value="<?= h($st['id']) ?>">
       <div class="grid2">
         <label>Nome da rádio *<input name="name" required maxlength="80" value="<?= h($st['name']) ?>" placeholder="Ex.: Rádio Gospel FM"></label>
-        <label>Estilo
+        <label>Gênero musical
           <select name="genre">
-            <option value="">— sem estilo —</option>
+            <option value="">— sem gênero —</option>
             <?php foreach ($cfg['genres'] as $g): ?><option value="<?= h($g['id']) ?>" <?= $g['id'] === $st['genre'] ? 'selected' : '' ?>><?= h($g['name']) ?></option><?php endforeach; ?>
           </select>
-          <small><a href="?tab=estilos">Gerenciar estilos</a></small>
+          <small><a href="?tab=estilos">Gerenciar gêneros</a></small>
         </label>
       </div>
       <label>URL do streaming *<input name="stream" type="url" required value="<?= h($st['stream']) ?>" placeholder="https://servidor.com:8000/live">
@@ -1180,7 +1180,7 @@ elseif ($tab === 'radios'):
         <span class="thumb"><?php if ($st['logo']): ?><img src="<?= h(img_url($st['logo'])) ?>" alt=""><?php else: ?><?= h(mb_strtoupper(mb_substr($st['name'], 0, 2))) ?><?php endif; ?></span>
         <div class="row-main">
           <strong><?= h($st['name']) ?></strong>
-          <small><?= h($genreNames[$st['genre']] ?? 'Sem estilo') ?> · <span class="mono"><?= h($st['stream']) ?></span></small>
+          <small><?= h($genreNames[$st['genre']] ?? 'Sem gênero') ?> · <span class="mono"><?= h($st['stream']) ?></span></small>
         </div>
         <span class="badge <?= !empty($st['active']) ? 'on' : '' ?>"><?= !empty($st['active']) ? 'No ar' : 'Fora do ar' ?></span>
         <div class="row-actions">
@@ -1213,9 +1213,9 @@ elseif ($tab === 'tv'):
       <input type="hidden" name="id" value="<?= h($tv['id']) ?>">
       <div class="grid2">
         <label>Nome do canal *<input name="name" required maxlength="80" value="<?= h($tv['name']) ?>" placeholder="Ex.: TV Nova Geração"></label>
-        <label>Estilo
+        <label>Gênero musical
           <select name="genre">
-            <option value="">— sem estilo —</option>
+            <option value="">— sem gênero —</option>
             <?php foreach ($cfg['genres'] as $g): ?><option value="<?= h($g['id']) ?>" <?= $g['id'] === $tv['genre'] ? 'selected' : '' ?>><?= h($g['name']) ?></option><?php endforeach; ?>
           </select>
         </label>
@@ -1259,7 +1259,7 @@ elseif ($tab === 'tv'):
         <span class="thumb wide"><?php if ($tv['logo']): ?><img src="<?= h(img_url($tv['logo'])) ?>" alt=""><?php else: ?>TV<?php endif; ?></span>
         <div class="row-main">
           <strong><?= h($tv['name']) ?></strong>
-          <small><?= h(TV_TYPES[$tv['type']] ?? $tv['type']) ?> · <?= h($genreNames[$tv['genre']] ?? 'Sem estilo') ?> · <span class="mono"><?= h($tv['src']) ?></span></small>
+          <small><?= h(TV_TYPES[$tv['type']] ?? $tv['type']) ?> · <?= h($genreNames[$tv['genre']] ?? 'Sem gênero') ?> · <span class="mono"><?= h($tv['src']) ?></span></small>
         </div>
         <span class="badge <?= !empty($tv['active']) ? 'on' : '' ?>"><?= !empty($tv['active']) ? 'No ar' : 'Fora do ar' ?></span>
         <div class="row-actions">
@@ -1393,11 +1393,11 @@ elseif ($tab === 'chat'):
 elseif ($tab === 'estilos'):
     $count = array_count_values(array_column($cfg['stations'], 'genre'));
 ?>
-    <div class="head"><h2>Estilos musicais</h2></div>
-    <p class="hint">Os estilos viram os filtros do aplicativo (só aparecem os que têm alguma rádio no ar).</p>
+    <div class="head"><h2>Gêneros musicais</h2></div>
+    <p class="hint">Os gêneros viram os filtros do aplicativo (só aparecem os que têm alguma rádio ou TV no ar). Para trocar o visual do app, use <a href="?tab=aparencia">Modelo e aparência</a>.</p>
     <form method="post" class="card add-inline">
       <?= csrf_field() ?><input type="hidden" name="action" value="genre_add"><input type="hidden" name="back" value="<?= $back ?>">
-      <input name="name" required maxlength="40" placeholder="Novo estilo (ex.: Pagode)">
+      <input name="name" required maxlength="40" placeholder="Novo gênero (ex.: Pagode)">
       <button class="btn primary">Adicionar</button>
     </form>
     <div class="rows">
@@ -1405,14 +1405,14 @@ elseif ($tab === 'estilos'):
       <div class="row">
         <form method="post" class="row-main rename">
           <?= csrf_field() ?><input type="hidden" name="action" value="genre_rename"><input type="hidden" name="id" value="<?= h($g['id']) ?>"><input type="hidden" name="back" value="<?= $back ?>">
-          <input name="name" value="<?= h($g['name']) ?>" maxlength="40" required aria-label="Nome do estilo">
+          <input name="name" value="<?= h($g['name']) ?>" maxlength="40" required aria-label="Nome do gênero">
           <button class="btn sm">Renomear</button>
         </form>
         <span class="badge"><?= (int) ($count[$g['id']] ?? 0) ?> rádio(s)</span>
         <div class="row-actions">
           <?= action_btn('genre_move', $g['id'], '↑', 'btn sm icon', ['dir' => -1]) ?>
           <?= action_btn('genre_move', $g['id'], '↓', 'btn sm icon', ['dir' => 1]) ?>
-          <?= action_btn('genre_delete', $g['id'], 'Excluir', 'btn sm danger', [], 'Excluir o estilo "' . $g['name'] . '"?') ?>
+          <?= action_btn('genre_delete', $g['id'], 'Excluir', 'btn sm danger', [], 'Excluir o gênero "' . $g['name'] . '"?') ?>
         </div>
       </div>
       <?php endforeach; ?>
@@ -1507,13 +1507,13 @@ elseif ($tab === 'publicidade'):
 // ======================= APARÊNCIA =======================
 elseif ($tab === 'aparencia'):
 ?>
-    <div class="head"><h2>Aparência e contatos</h2></div>
+    <div class="head"><h2>Modelo e aparência</h2></div>
     <form method="post" enctype="multipart/form-data" class="card form">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="settings_save">
       <input type="hidden" name="back" value="<?= $back ?>">
-      <h3>Estilo do aplicativo</h3>
-      <p class="hint">Escolha um dos <?= count(RP_THEMES) ?> estilos. Rádio única abre direto no player; com várias rádios ou TV, o app mostra a lista.</p>
+      <h3>Modelo do aplicativo</h3>
+      <p class="hint">Clique no modelo e depois em <b>Salvar aparência</b> (no fim da página). Pode trocar quando quiser: rádios, anúncios e pedidos continuam iguais. São <?= count(RP_THEMES) ?> modelos. Rádio única abre direto no player; com várias rádios ou TV, o app mostra a lista.</p>
       <div class="themes">
         <?php foreach (RP_THEMES as $key => [$tname, $tdesc, $tbg, $taccent, $tpreview]): ?>
           <label class="theme">
