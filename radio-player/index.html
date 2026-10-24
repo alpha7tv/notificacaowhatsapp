@@ -176,7 +176,7 @@
       <label id="reqSongWrap">Música e artista<input name="song" id="reqSong" maxlength="120" placeholder="Ex.: Raridade — Anderson Freire"></label>
       <label><span id="reqTextLabel">Recado (opcional)</span><textarea name="text" id="reqText" maxlength="500" rows="3"></textarea></label>
       <div class="two">
-        <label>Cidade<input name="city" id="reqCity" maxlength="60" autocomplete="address-level2"></label>
+        <label>Sua cidade<input name="city" id="reqCity" required maxlength="60" autocomplete="address-level2" placeholder="De onde você ouve"></label>
         <label>WhatsApp (opcional)<input name="phone" id="reqPhone" maxlength="30" inputmode="tel" autocomplete="tel"></label>
       </div>
       <p class="form-msg" id="reqMsg" role="alert"></p>
@@ -199,9 +199,15 @@
       <div class="online-list" id="onlineList"></div>
       <div class="chat-log" id="chatLog" aria-live="polite"></div>
       <form class="chat-join" id="chatJoin">
-        <p>Escolha um apelido para conversar com os outros ouvintes.</p>
-        <div class="chat-row"><input id="chatNick" maxlength="24" placeholder="Seu apelido" required autocomplete="nickname"><button class="btn-primary">Entrar</button></div>
+        <p><b>Antes de conversar, conte quem é você.</b><br>Seu nome e sua cidade aparecem para os outros ouvintes.</p>
+        <div class="chat-row">
+          <input id="chatNick" maxlength="24" placeholder="Seu nome" required autocomplete="given-name" aria-label="Seu nome">
+          <input id="chatCity" maxlength="40" placeholder="Sua cidade" required autocomplete="address-level2" aria-label="Sua cidade">
+        </div>
+        <button class="btn-primary">Entrar no chat</button>
+        <p class="form-msg" id="chatJoinMsg" role="alert"></p>
       </form>
+      <p class="chat-me" id="chatMe" hidden></p>
       <form class="chat-form" id="chatForm" hidden>
         <input id="chatInput" maxlength="300" placeholder="Escreva uma mensagem…" autocomplete="off" aria-label="Mensagem">
         <button class="play sm" aria-label="Enviar"><svg><use href="#i-send"/></svg></button>

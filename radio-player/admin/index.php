@@ -1350,20 +1350,21 @@ elseif ($tab === 'chat'):
     <div class="head">
       <h2>Chat dos ouvintes</h2>
       <div class="actions">
-        <span class="online" id="chatOnline">0 online</span>
+        <span class="online" id="chatOnline">Ninguém online agora</span>
         <?= action_btn('chat_clear', '', 'Apagar conversa', 'btn sm ghost', [], 'Apagar todas as mensagens do chat?') ?>
       </div>
     </div>
     <?php if (empty($s['chat'])): ?><p class="alert warn">O chat está desligado no app. Ligue em <a href="?tab=pedidos">Pedidos → O que aparece no app</a>.</p><?php endif; ?>
     <div class="card chatbox">
       <div class="chat-log" id="chatLog" aria-live="polite"><p class="empty sm">Carregando…</p></div>
+      <p class="chat-send-title">Responder no chat (aparece em destaque para todos os ouvintes)</p>
       <form class="chat-send" id="chatSend">
-        <input id="chatNick" maxlength="24" value="Locutor" aria-label="Seu nome no chat">
-        <input id="chatText" maxlength="300" placeholder="Escreva para os ouvintes…" autocomplete="off" aria-label="Mensagem">
+        <input id="chatNick" maxlength="24" value="Locutor" aria-label="Seu nome no chat" title="Seu nome no chat">
+        <input id="chatText" maxlength="300" placeholder="Escreva para os ouvintes e aperte Enter…" autocomplete="off" aria-label="Mensagem">
         <button class="btn primary">Enviar</button>
       </form>
     </div>
-    <p class="hint">Passe o mouse (ou toque) numa mensagem para apagar ou bloquear o autor. Suas mensagens aparecem em destaque para os ouvintes.</p>
+    <p class="hint">Em cada mensagem: <b>Responder</b> (escreve "@nome" para você completar), <b>Apagar</b> ou <b>Bloquear</b> o autor. Os nomes em "Online agora" são os apelidos de quem está com o chat aberto no app.</p>
     <?php if ($bans): ?>
       <h3 class="section">Bloqueados</h3>
       <div class="rows">
@@ -1826,9 +1827,9 @@ else:
       el.className = 'msg ' + m.kind;
       el.dataset.id = m.id;
       el.innerHTML = m.kind === 'system'
-        ? `<span class="sys">🎵 <b>${esc(m.nick)}</b> ${esc(m.text)}</span><time>${hhmm(m.at)}</time>`
-        : `<b>${esc(m.nick)}</b><span>${esc(m.text)}</span><time>${hhmm(m.at)}</time>` +
-          (m.kind === 'user' ? '<span class="msg-tools"><button type="button" data-do="chat_delete">Apagar</button><button type="button" data-do="chat_ban">Bloquear</button></span>' : '<span class="msg-tools"><button type="button" data-do="chat_delete">Apagar</button></span>');
+        ? `<span class="sys">🎵 <b>${esc(m.nick)}</b>${m.city ? ' (' + esc(m.city) + ')' : ''} ${esc(m.text)}</span><time>${hhmm(m.at)}</time>`
+        : `<b>${esc(m.nick)}${m.city ? ' <small>· ' + esc(m.city) + '</small>' : ''}</b><span>${esc(m.text)}</span><time>${hhmm(m.at)}</time>` +
+          (m.kind === 'user' ? `<span class="msg-tools"><button type="button" class="reply" data-reply="${esc(m.nick)}">Responder</button><button type="button" data-do="chat_delete">Apagar</button><button type="button" data-do="chat_ban">Bloquear</button></span>` : '<span class="msg-tools"><button type="button" data-do="chat_delete">Apagar</button></span>');
       log.appendChild(el);
     };
     const load = async () => {
@@ -1841,10 +1842,17 @@ else:
         d.messages.forEach(add);
         since = d.last;
         if (atBottom || d.messages.length) log.scrollTop = log.scrollHeight;
-        document.getElementById('chatOnline').textContent = d.online.length + ' online' + (d.online.length ? ': ' + d.online.slice(0, 8).join(', ') : '');
+        document.getElementById('chatOnline').textContent = d.online.length ? `Online agora (${d.online.length}): ` + d.online.slice(0, 8).join(', ') + (d.online.length > 8 ? '…' : '') : 'Ninguém online agora';
       } catch { /* tenta de novo */ }
     };
     log.addEventListener('click', async (e) => {
+      const rb = e.target.closest('button[data-reply]');
+      if (rb) {
+        const t = document.getElementById('chatText');
+        t.value = '@' + rb.dataset.reply + ' ';
+        t.focus();
+        return;
+      }
       const b = e.target.closest('button[data-do]');
       if (!b) return;
       const msg = b.closest('.msg');

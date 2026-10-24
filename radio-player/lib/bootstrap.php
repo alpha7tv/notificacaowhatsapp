@@ -531,7 +531,7 @@ function rp_chat_since(int $since, bool $admin = false, string $viewer = ''): ar
         if ($m['id'] <= $since) {
             continue;
         }
-        $row = ['id' => $m['id'], 'nick' => $m['nick'], 'text' => $m['text'], 'at' => $m['at'], 'kind' => $m['kind'] ?? 'user'];
+        $row = ['id' => $m['id'], 'nick' => $m['nick'], 'city' => $m['city'] ?? '', 'text' => $m['text'], 'at' => $m['at'], 'kind' => $m['kind'] ?? 'user'];
         if ($admin) {
             $row['device'] = $m['device'] ?? '';
         } else {

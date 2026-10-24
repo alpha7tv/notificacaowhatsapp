@@ -58,8 +58,12 @@ if ($action === 'request' && $isPost) {
     $name = rp_clean($in['name'] ?? '', 40);
     $text = rp_clean_text($in['text'] ?? '', 500);
     $song = rp_clean($in['song'] ?? '', 120);
-    if ($name === '' || ($type === 'prayer' ? $text === '' : $text === '' && $song === '')) {
-        api_out(['error' => $type === 'prayer' ? 'Preencha seu nome e o pedido de oração.' : 'Preencha seu nome e a música.'], 422);
+    $city = rp_clean($in['city'] ?? '', 60);
+    if ($name === '' || $city === '') {
+        api_out(['error' => 'Informe seu nome e a cidade de onde está ouvindo.'], 422);
+    }
+    if ($type === 'prayer' ? $text === '' : $text === '' && $song === '') {
+        api_out(['error' => $type === 'prayer' ? 'Escreva seu pedido de oração.' : 'Escreva a música que você quer ouvir.'], 422);
     }
     if (rp_is_banned($device)) {
         api_out(['error' => 'Envio bloqueado.'], 403);
@@ -68,13 +72,13 @@ if ($action === 'request' && $isPost) {
     if (($device && !rp_rate_ok('reqd:' . $device, 30)) || !rp_rate_count('reqi:' . rp_ip_hash(), 20, 60)) {
         api_out(['error' => 'Aguarde alguns segundos antes de enviar outro pedido.'], 429);
     }
-    $req = rp_locked(function () use ($type, $device, $name, $text, $song, $in) {
+    $req = rp_locked(function () use ($type, $device, $name, $city, $text, $song, $in) {
         $all = rp_read_json(rp_tfile('requests'), ['last' => 0, 'items' => []]);
         $req = [
             'id' => ++$all['last'],
             'type' => $type,
             'name' => $name,
-            'city' => rp_clean($in['city'] ?? '', 60),
+            'city' => $city,
             'phone' => rp_clean($in['phone'] ?? '', 30),
             'song' => $type === 'music' ? $song : '',
             'text' => $text,
@@ -92,7 +96,7 @@ if ($action === 'request' && $isPost) {
     });
     $s = rp_config()['settings'];
     if ($type === 'music' && !empty($s['chat']) && !empty($s['chat_announce'])) {
-        rp_chat_add(['kind' => 'system', 'nick' => $name, 'text' => 'pediu ' . ($req['song'] !== '' ? '"' . $req['song'] . '"' : 'uma música'), 'device' => $device]);
+        rp_chat_add(['kind' => 'system', 'nick' => $name, 'city' => $city, 'text' => 'pediu ' . ($req['song'] !== '' ? '"' . $req['song'] . '"' : 'uma música'), 'device' => $device]);
     }
     api_out(['ok' => true, 'id' => $req['id']]);
 }
@@ -122,9 +126,10 @@ if ($action === 'chat' || $action === 'chat_send') {
     }
     $device = rp_device($in['device'] ?? '');
     $nick = rp_clean($in['nick'] ?? '', 24);
+    $city = rp_clean($in['city'] ?? '', 40);
     if ($action === 'chat_send') {
-        if (!$isPost || $device === '' || $nick === '') {
-            api_out(['error' => 'Escolha um apelido para conversar.'], 422);
+        if (!$isPost || $device === '' || $nick === '' || $city === '') {
+            api_out(['error' => 'Informe seu nome e sua cidade para conversar.'], 422);
         }
         $text = rp_clean($in['text'] ?? '', 300);
         if ($text === '') {
@@ -136,8 +141,8 @@ if ($action === 'chat' || $action === 'chat_send') {
         if (!rp_rate_ok('chat:' . $device, 2) || !rp_rate_count('chati:' . rp_ip_hash(), 60, 60)) {
             api_out(['error' => 'Calma! Espere um instante para mandar outra mensagem.'], 429);
         }
-        $msg = rp_chat_add(['kind' => 'user', 'nick' => $nick, 'text' => $text, 'device' => $device]);
-        rp_presence($device, $nick);
+        $msg = rp_chat_add(['kind' => 'user', 'nick' => $nick, 'city' => $city, 'text' => $text, 'device' => $device]);
+        rp_presence($device, $nick . ' · ' . $city);
         api_out(['ok' => true, 'id' => $msg['id']]);
     }
     $since = max(0, (int) ($in['since'] ?? 0));
@@ -145,7 +150,7 @@ if ($action === 'chat' || $action === 'chat_send') {
     if ($since === 0) {
         $data['messages'] = array_slice($data['messages'], -60);
     }
-    $data['online'] = rp_presence($device ?: null, $nick !== '' ? $nick : null);
+    $data['online'] = rp_presence($device ?: null, $nick !== '' && $city !== '' ? $nick . ' · ' . $city : null);
     $data['banned'] = rp_is_banned($device);
     api_out($data);
 }

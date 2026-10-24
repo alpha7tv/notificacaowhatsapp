@@ -911,7 +911,8 @@
     const name = $('#reqName').value.trim();
     const song = $('#reqSong').value.trim();
     const text = $('#reqText').value.trim();
-    if (!name) { $('#reqMsg').textContent = 'Escreva seu nome.'; return; }
+    if (!name) { $('#reqMsg').textContent = 'Escreva seu nome.'; $('#reqName').focus(); return; }
+    if (!$('#reqCity').value.trim()) { $('#reqMsg').textContent = 'Escreva a cidade de onde você está ouvindo.'; $('#reqCity').focus(); return; }
     if (reqType === 'music' && !song && !text) { $('#reqMsg').textContent = 'Escreva a música que você quer ouvir.'; return; }
     if (reqType === 'prayer' && !text) { $('#reqMsg').textContent = 'Escreva seu pedido de oração.'; return; }
     Object.assign(profile, { name, city: $('#reqCity').value.trim(), phone: $('#reqPhone').value.trim() });
@@ -957,7 +958,8 @@
 
   // ---------- Chat dos ouvintes ----------
 
-  const chat = { since: 0, timer: null, nick: store.get('nick', '') };
+  const chat = { since: 0, timer: null, nick: store.get('nick', ''), city: store.get('chatCity', '') || profile.city || '' };
+  if (!chat.city) chat.nick = ''; // versões antigas guardavam só o apelido
 
   function openChat() {
     const scr = $('#chatScreen');
@@ -985,20 +987,27 @@
   function showChatForm() {
     $('#chatJoin').hidden = !!chat.nick;
     $('#chatForm').hidden = !chat.nick;
+    $('#chatMe').hidden = !chat.nick;
+    if (chat.nick) $('#chatMe').innerHTML = `Você está como <b>${escapeHtml(chat.nick)}</b> de <b>${escapeHtml(chat.city)}</b> · <button type="button" id="chatRename">trocar</button>`;
+    if (!chat.nick) {
+      $('#chatNick').value = $('#chatNick').value || profile.name || '';
+      $('#chatCity').value = $('#chatCity').value || chat.city || profile.city || '';
+    }
     if (chat.nick) setTimeout(() => $('#chatInput').focus({ preventScroll: true }), 300);
   }
 
   function chatMsgHtml(m) {
     const t = new Date(m.at * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    if (m.kind === 'system') return `<div class="cmsg system" data-id="${m.id}"><svg><use href="#i-music"/></svg><span><b>${escapeHtml(m.nick)}</b> ${escapeHtml(m.text)}</span></div>`;
+    const from = m.city ? ` <small>· ${escapeHtml(m.city)}</small>` : '';
+    if (m.kind === 'system') return `<div class="cmsg system" data-id="${m.id}"><svg><use href="#i-music"/></svg><span><b>${escapeHtml(m.nick)}</b>${from} ${escapeHtml(m.text)}</span></div>`;
     return `<div class="cmsg ${m.kind}${m.mine ? ' mine' : ''}" data-id="${m.id}">
-      ${m.mine ? '' : `<b>${escapeHtml(m.nick)}${m.kind === 'host' ? ' <span class="host-tag">Locutor</span>' : ''}</b>`}
+      ${m.mine ? '' : `<b>${m.kind === 'host' && m.nick.toLowerCase() === 'locutor' ? '<span class="host-tag">Locutor</span>' : escapeHtml(m.nick)}${from}${m.kind === 'host' && m.nick.toLowerCase() !== 'locutor' ? ' <span class="host-tag">Locutor</span>' : ''}</b>`}
       <p>${escapeHtml(m.text)}</p><time>${t}</time></div>`;
   }
 
   async function loadChat() {
     if (document.hidden) return;
-    const r = await api('chat', { since: chat.since, nick: chat.nick }, 'GET').catch(() => null);
+    const r = await api('chat', { since: chat.since, nick: chat.nick, city: chat.nick ? chat.city : '' }, 'GET').catch(() => null);
     const log = $('#chatLog');
     if (!r || !r.ok) {
       if (r && r.error && chat.since === 0) log.innerHTML = `<p class="chat-empty">${escapeHtml(r.error)}</p>`;
@@ -1014,16 +1023,22 @@
     }
     chat.since = r.last;
     $('#chatOnline').textContent = `${r.online.length} online`;
-    $('#onlineList').innerHTML = r.online.slice(0, 30).map((n) => `<span class="who${n === chat.nick ? ' me' : ''}">${escapeHtml(n)}</span>`).join('');
+    $('#chatInput').placeholder = r.online.length > 1 ? 'Escreva para todos…' : 'Escreva uma mensagem…';
+    const me = chat.nick + ' · ' + chat.city;
+    $('#onlineList').innerHTML = r.online.slice(0, 30).map((n) => `<span class="who${n === me ? ' me' : ''}">${escapeHtml(n)}</span>`).join('');
     if (r.banned) { $('#chatForm').hidden = true; $('#chatJoin').hidden = true; }
   }
 
   $('#chatJoin').addEventListener('submit', (e) => {
     e.preventDefault();
     const n = $('#chatNick').value.trim();
-    if (!n) return;
+    const c = $('#chatCity').value.trim();
+    if (!n || !c) { $('#chatJoinMsg').textContent = !n ? 'Escreva seu nome.' : 'Escreva sua cidade.'; (!n ? $('#chatNick') : $('#chatCity')).focus(); return; }
+    $('#chatJoinMsg').textContent = '';
     chat.nick = n;
+    chat.city = c;
     store.set('nick', n);
+    store.set('chatCity', c);
     showChatForm();
     loadChat();
   });
@@ -1033,11 +1048,18 @@
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
-    const r = await api('chat_send', { nick: chat.nick, text });
+    const r = await api('chat_send', { nick: chat.nick, city: chat.city, text });
     if (!r.ok) { toast(r.error || 'Mensagem não enviada.'); input.value = text; return; }
     loadChat();
   });
   $('#closeChat').addEventListener('click', () => closeChat());
+  $('#chatMe').addEventListener('click', (e) => {
+    if (!e.target.closest('#chatRename')) return;
+    $('#chatNick').value = chat.nick;
+    chat.nick = '';
+    showChatForm();
+    $('#chatNick').focus();
+  });
 
   // ---------- Temas visuais ----------
 

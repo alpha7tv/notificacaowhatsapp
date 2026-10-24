@@ -562,12 +562,18 @@ body.is-live .art-ring { animation-play-state: running; }
 .chat-join { display: grid; gap: 8px; padding: 12px; border-radius: var(--radius); background: var(--surface); border: var(--card-border); }
 .chat-join p { margin: 0; color: var(--muted); font-size: .9rem; }
 .chat-row { display: flex; gap: 8px; }
+.chat-join .btn-primary { width: 100%; border-radius: 999px; }
+.cmsg b small { font-weight: 600; color: var(--muted); }
+.cmsg.system small { color: var(--muted); }
 .chat-row input, .chat-form input {
   flex: 1; min-width: 0; height: 48px; border: 1px solid var(--border); border-radius: 999px; padding: 0 16px;
   background: var(--surface); color: var(--text); font: inherit;
 }
 .chat-row .btn-primary { width: auto; padding: 0 20px; border-radius: 999px; }
 .chat-form { display: flex; gap: 8px; align-items: center; }
+.chat-me { margin: 0; font-size: .82rem; color: var(--muted); text-align: center; }
+.chat-me b { color: var(--text); }
+.chat-me button { border: 0; background: none; color: var(--accent); font-weight: 700; padding: 0; text-decoration: underline; }
 
 /* Publicidade */
 .ad-slot { position: relative; margin: 4px 0 14px; }
