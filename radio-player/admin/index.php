@@ -534,7 +534,7 @@ function action_btn(string $action, string $id, string $label, string $class = '
   <meta name="robots" content="noindex, nofollow">
   <title>Painel · <?= h($s['title']) ?></title>
   <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="admin.css?v=<?= (int) @filemtime(__DIR__ . '/admin.css') ?>">
   <style>:root { --accent: <?= h(rp_accent($s)) ?>; }</style>
 </head>
 <body>

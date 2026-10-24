@@ -86,6 +86,10 @@ rsync -a --delete \
   --exclude '/data/***' --exclude '/uploads/***' --exclude '/deploy/***' \
   "$SRC/" "$DIR/"
 mkdir -p "$DIR/data" "$DIR/uploads"
+# Versão nos endereços do CSS/JS: força os navegadores a baixar a versão nova.
+BUILD="$(date +%Y%m%d%H%M%S)"
+sed -i "s/__BUILD__/${BUILD}/g" "$DIR/index.html" "$DIR/sw.js"
+
 for d in data uploads; do
   cp -n "$SRC/$d/.htaccess" "$DIR/$d/" 2>/dev/null || true
 done
@@ -136,11 +140,13 @@ server {
         try_files \$uri =404;
     }
 
-    # O service worker e o app precisam sempre buscar a versão nova.
+    # Página, service worker, CSS e JS: o navegador sempre confere se há versão nova.
     location = /sw.js { add_header Cache-Control "no-cache"; try_files \$uri =404; }
-    location ~* \.(css|js|svg|png|jpg|jpeg|webp|gif|ico)\$ { expires 7d; try_files \$uri =404; }
+    location ~* \.(css|js)\$ { add_header Cache-Control "no-cache"; try_files \$uri =404; }
+    location ~* \.(svg|png|jpg|jpeg|webp|gif|ico)\$ { expires 7d; try_files \$uri =404; }
 
     location / {
+        add_header Cache-Control "no-cache";
         try_files \$uri \$uri/ =404;
     }
 
