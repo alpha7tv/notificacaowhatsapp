@@ -198,3 +198,5 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .msg b small { color: var(--muted); font-weight: 600; }
 .np-test { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .np-test img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; vertical-align: middle; margin-right: 8px; }
+.np-push .steps { margin: 0; padding-left: 20px; display: grid; gap: 10px; }
+.np-push .steps .actions { margin-top: 8px; }

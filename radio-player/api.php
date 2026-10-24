@@ -50,6 +50,26 @@ $action = (string) ($_GET['action'] ?? '');
 $isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 $in = $isPost ? ($_POST ?: (json_decode((string) file_get_contents('php://input'), true) ?: [])) : $_GET;
 
+// ----- Música enviada pelo computador da rádio (script do Zara Radio) -----
+if ($action === 'np_push' && $isPost) {
+    $cfg = rp_config();
+    $st = null;
+    foreach ($cfg['stations'] as $x) {
+        if ($x['id'] === (string) ($in['id'] ?? '')) {
+            $st = $x;
+        }
+    }
+    $key = (string) ($in['key'] ?? '');
+    if (!$st || empty($st['np_key']) || !hash_equals((string) $st['np_key'], $key)) {
+        api_out(['error' => 'Chave inválida. Baixe o script de novo no painel.'], 403);
+    }
+    if (!rp_rate_count('np_push:' . $st['id'], 30, 60)) {
+        api_out(['error' => 'Envios demais.'], 429);
+    }
+    $np = np_push($st, np_clean_pushed((string) ($in['song'] ?? '')), !empty($cfg['settings']['np_art']));
+    api_out(['ok' => true, 'song' => $np['song'], 'art' => $np['art'] !== '']);
+}
+
 // ----- Música tocando (RDS) -----
 if ($action === 'nowplaying') {
     $cfg = rp_config();

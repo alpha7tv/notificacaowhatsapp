@@ -197,6 +197,65 @@ if (isset($_GET['ajax'])) {
     if ($_GET['ajax'] === 'poll') {
         json_out(unread_requests());
     }
+    if ($_GET['ajax'] === 'np_script') {
+        $cfg = rp_config();
+        $i = find_index($cfg['stations'], (string) ($_GET['id'] ?? ''));
+        if ($i < 0 || empty($cfg['stations'][$i]['np_key'])) {
+            json_out(['error' => 'Gere a chave primeiro.'], 404);
+        }
+        $st = $cfg['stations'][$i];
+        $push = app_url($tenant) . 'api.php?action=np_push';
+        if (($_GET['f'] ?? '') === 'bat') {
+            header('Content-Type: application/octet-stream');
+            header('Content-Disposition: attachment; filename="iniciar-musica-no-app.bat"');
+            $ascii = preg_replace('/[^A-Za-z0-9 ,.()-]/', '', (string) iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $st['name']));
+            echo "@echo off\r\ntitle Musica tocando no app - {$ascii}\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0musica-no-app.ps1\"\r\npause\r\n";
+            exit;
+        }
+        $ps = <<<PS1
+# Rádio Player — envia a música tocando no Zara Radio para o app de "{$st['name']}".
+# Deixe esta janela aberta enquanto a rádio estiver no ar.
+
+# 1) Ajuste aqui o arquivo que o Zara Radio grava com a música atual:
+\$arquivo = "C:\\ZaraRadio\\currentsong.txt"
+
+# 2) Não altere daqui para baixo.
+\$url   = "{$push}"
+\$id    = "{$st['id']}"
+\$chave = "{$st['np_key']}"
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+\$ultima = ""
+\$enviadoEm = Get-Date "2000-01-01"
+Write-Host "Enviando a música tocando para o app. Deixe esta janela aberta." -ForegroundColor Green
+Write-Host "Arquivo: \$arquivo"
+while (\$true) {
+    try {
+        if (Test-Path -LiteralPath \$arquivo) {
+            \$musica = ((Get-Content -LiteralPath \$arquivo -Raw -Encoding Default) -replace "`0", "").Trim()
+            \$repetir = ((Get-Date) - \$enviadoEm).TotalSeconds -ge 120
+            if (\$musica -and (\$musica -ne \$ultima -or \$repetir)) {
+                \$r = Invoke-RestMethod -Uri \$url -Method Post -Body @{ id = \$id; key = \$chave; song = \$musica }
+                if (\$musica -ne \$ultima) { Write-Host (Get-Date -Format "HH:mm:ss") " " \$r.song }
+                \$ultima = \$musica
+                \$enviadoEm = Get-Date
+            }
+        } else {
+            Write-Host "Arquivo não encontrado: \$arquivo  (confira o caminho na linha 5 deste script)" -ForegroundColor Yellow
+            Start-Sleep -Seconds 25
+        }
+    } catch {
+        Write-Host "Falha ao enviar (vou tentar de novo): \$(\$_.Exception.Message)" -ForegroundColor Red
+    }
+    Start-Sleep -Seconds 5
+}
+PS1;
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="musica-no-app.ps1"');
+        // BOM UTF-8 + CRLF: o PowerShell do Windows lê acentos corretamente.
+        echo "\xEF\xBB\xBF" . str_replace("\n", "\r\n", $ps);
+        exit;
+    }
     if ($_GET['ajax'] === 'np') {
         $cfg = rp_config();
         $i = find_index($cfg['stations'], (string) ($_GET['id'] ?? ''));
@@ -473,6 +532,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                         'city' => rp_clean($_POST['city'] ?? '', 80),
                         'slogan' => rp_clean($_POST['slogan'] ?? '', 120),
                         'metadata' => rp_url($_POST['metadata'] ?? ''),
+                        'np_key' => $old['np_key'] ?? '',
                         'active' => !empty($_POST['active']),
                     ];
                     if ($i >= 0) {
@@ -484,6 +544,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                 });
                 flash('Rádio salva.');
                 go('tab=radios');
+
+            case 'np_key_new':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['stations'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        $cfg['stations'][$i]['np_key'] = bin2hex(random_bytes(16));
+                    }
+                    return $cfg;
+                });
+                flash('Chave gerada. Baixe o script abaixo e rode no computador da rádio.');
+                go('tab=radios&edit=' . rawurlencode((string) $_POST['id']));
 
             case 'station_delete':
                 rp_update_config(function ($cfg) {
@@ -1158,6 +1229,7 @@ elseif ($tab === 'radios'):
       <?php if ($st['id']): ?>
       <div class="np-test"><button class="btn sm" type="button" id="npTest" data-id="<?= h($st['id']) ?>">♫ Ver música tocando agora</button><span id="npResult" class="hint"></span></div>
       <?php endif; ?>
+
       <div class="upload">
         <?php if ($st['logo']): ?><img src="<?= h(img_url($st['logo'])) ?>" alt=""><?php endif; ?>
         <label>Logo da rádio (quadrado, ex.: 500×500)<input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
@@ -1169,6 +1241,29 @@ elseif ($tab === 'radios'):
         <?php if ($st['stream']): ?><button class="btn" type="button" id="testStream" data-src="<?= h($st['stream']) ?>">▶ Testar áudio</button><?php endif; ?>
       </div>
     </form>
+    <?php if ($st['id']): ?>
+    <div class="card form np-push">
+      <h3>Música tocando pelo computador da rádio (Zara Radio)</h3>
+      <p class="hint">Use se o nome da música não aparecer pelo streaming. Um script lê o arquivo que o Zara grava com a música atual e envia direto para o app, a cada troca de música. Funciona com qualquer programa de transmissão.</p>
+      <?php if (empty($st['np_key'])): ?>
+        <?= action_btn('np_key_new', $st['id'], 'Ativar envio pelo computador da rádio', 'btn primary') ?>
+      <?php else: ?>
+        <ol class="steps">
+          <li>No Zara Radio, ative a gravação da música atual em arquivo e anote o caminho (ex.: <code>C:\ZaraRadio\currentsong.txt</code>).</li>
+          <li>Baixe os dois arquivos e salve <b>na mesma pasta</b> no computador da rádio:
+            <div class="actions">
+              <a class="btn primary" href="?ajax=np_script&amp;id=<?= h($st['id']) ?>&amp;f=ps1">⬇ musica-no-app.ps1</a>
+              <a class="btn" href="?ajax=np_script&amp;id=<?= h($st['id']) ?>&amp;f=bat">⬇ iniciar-musica-no-app.bat</a>
+            </div></li>
+          <li>Abra o <b>musica-no-app.ps1</b> no Bloco de Notas e troque o caminho da <b>linha 5</b> pelo arquivo do Zara. Salve.</li>
+          <li>Dê dois cliques em <b>iniciar-musica-no-app.bat</b> e deixe a janela aberta. A cada música, ela mostra o nome enviado.</li>
+          <li>Para iniciar junto com o Windows: copie o <b>.bat</b> para a pasta que abre com <code>Win + R</code> → <code>shell:startup</code>.</li>
+        </ol>
+        <p class="hint">A chave é secreta e só serve para esta rádio. Se vazar, gere outra (o script antigo para de funcionar).
+          <?= action_btn('np_key_new', $st['id'], 'Gerar nova chave', 'btn sm ghost', [], 'Gerar nova chave? O script atual vai parar de funcionar.') ?></p>
+      <?php endif; ?>
+    </div>
+    <?php endif; ?>
 <?php else: ?>
     <div class="head"><h2>Rádios</h2><a class="btn primary" href="?tab=radios&edit=new">+ Nova rádio</a></div>
     <?php if (!$cfg['stations']): ?>

@@ -17,6 +17,7 @@ declare(strict_types=1);
 const NP_TTL = 10;          // segundos de cache da música tocando
 const NP_FAIL_TTL = 60;     // quando não há metadados, espera mais para tentar de novo
 const NP_TIMEOUT = 5;       // segundos por conexão
+const NP_PUSH_TTL = 600;    // música enviada pelo computador da rádio vale por 10 min sem novo envio
 
 /** Resolve o host e devolve um IP público — bloqueia rede interna (127.x, 10.x, 192.168.x…). */
 function np_public_ip(string $host): ?string
@@ -276,6 +277,10 @@ function np_now(array $station, bool $withArt, bool $force = false): array
     $file = rp_tfile('np');
     $all = rp_read_json($file, []);
     $cur = $all[$id] ?? ['song' => '', 'artist' => '', 'title' => '', 'art' => '', 'at' => 0, 'checked' => 0, 'history' => []];
+    // Enviado pelo computador da rádio (script do Zara): tem prioridade enquanto estiver ativo.
+    if (time() - (int) ($cur['pushed_at'] ?? 0) < NP_PUSH_TTL) {
+        return $cur;
+    }
     $ttl = $cur['song'] !== '' ? NP_TTL : NP_FAIL_TTL;
     if (!$force && time() - (int) $cur['checked'] < $ttl) {
         return $cur;
@@ -318,4 +323,45 @@ function np_now(array $station, bool $withArt, bool $force = false): array
         flock($lock, LOCK_UN);
         fclose($lock);
     }
+}
+
+/** Limpa o que o programa de automação grava ("C:\\Musicas\\Artista - Musica.mp3" → "Artista - Musica"). */
+function np_clean_pushed(string $song): string
+{
+    $song = np_utf8(str_replace("\0", '', $song));
+    $song = trim((string) strtok($song, "\r\n"));
+    if (preg_match('~[\\\\/]~', $song)) {
+        $song = (string) preg_replace('~^.*[\\\\/]~', '', $song);
+    }
+    $song = (string) preg_replace('~\.(mp3|wav|wma|ogg|flac|aac|m4a|mp2)$~i', '', $song);
+    $song = trim((string) preg_replace('~^\d{1,3}\s*[-._)]\s*~', '', $song)); // "01 - Música"
+    return mb_substr($song, 0, 200);
+}
+
+/** Grava a música enviada pelo computador da rádio. */
+function np_push(array $station, string $song, bool $withArt): array
+{
+    $id = (string) $station['id'];
+    $file = rp_tfile('np');
+    $cur = rp_read_json($file, [])[$id] ?? ['song' => '', 'artist' => '', 'title' => '', 'art' => '', 'at' => 0, 'checked' => 0, 'history' => []];
+    $next = $cur;
+    $next['pushed_at'] = time();
+    $next['checked'] = time();
+    if ($song !== $cur['song']) {
+        [$artist, $title] = $song !== '' ? np_split($song) : ['', ''];
+        $next = array_merge($next, ['song' => $song, 'artist' => $artist, 'title' => $title, 'at' => time(), 'art' => '']);
+        if ($song !== '') {
+            array_unshift($next['history'], ['song' => $song, 'at' => time()]);
+            $next['history'] = array_slice($next['history'], 0, 10);
+            if ($withArt) {
+                $next['art'] = np_artwork($artist, $title);
+            }
+        }
+    }
+    rp_locked(function () use ($file, $id, $next) {
+        $all = rp_read_json($file, []);
+        $all[$id] = $next;
+        rp_write_atomic($file, json_encode($all, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    });
+    return $next;
 }
