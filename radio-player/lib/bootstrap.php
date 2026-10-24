@@ -110,6 +110,7 @@ function rp_defaults(): array
             'req_prayer' => true,
             'chat' => true,
             'chat_announce' => true,
+            'np_art' => true,
         ],
         'genres' => $genres,
         'stations' => [],

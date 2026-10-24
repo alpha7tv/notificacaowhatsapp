@@ -34,14 +34,14 @@
     metaTimer: null,
     sleepTimer: null,
     sleepAt: 0,
-    nowPlaying: '',
+    np: null,
     genreOrder: [],
     config: null,
     loadedAt: 0,
   };
 
   const MAX_RETRIES = 5;
-  const META_INTERVAL = 15000;
+  const META_INTERVAL = 10000;
 
   // ---------- Utilidades ----------
 
@@ -214,20 +214,28 @@
   function subtitle() {
     const st = state.current;
     if (!st) return 'Escolha uma rádio';
-    return state.nowPlaying || st.slogan || [st.genre, st.city].filter(Boolean).join(' · ') || 'Ao vivo';
+    if (state.np && state.np.song) return state.np.artist ? `${state.np.artist} · ${st.name}` : st.name;
+    return st.slogan || [st.genre, st.city].filter(Boolean).join(' · ') || 'Ao vivo';
   }
 
   function updateInfo() {
     const st = state.current;
     if (!st) return;
     $('#mini').hidden = false;
-    $('#stationName').textContent = st.name;
+    const np = state.np && state.np.song ? state.np : null;
+    $('#stationName').textContent = np ? np.title || np.song : st.name;
     $('#miniName').textContent = st.name;
     $('#nowPlaying').textContent = subtitle();
-    $('#miniNow').textContent = subtitle();
-    setCover($('#cover'), st);
-    setCover($('#miniCover'), st);
-    const bgImg = (state.config && state.config.background) || coverOf(st);
+    $('#miniNow').textContent = np ? np.song : subtitle();
+    $('#player').classList.toggle('has-np', !!np);
+    if (np && np.art) {
+      setArt($('#cover'), np.art, st);
+      setArt($('#miniCover'), np.art, st);
+    } else {
+      setCover($('#cover'), st);
+      setCover($('#miniCover'), st);
+    }
+    const bgImg = (state.config && state.config.background) || (np && np.art) || coverOf(st);
     $('#playerBg').style.backgroundImage = `url("${bgImg.replace(/"/g, '%22')}")`;
     const fav = state.favorites.has(st.id);
     $('#favBtn').setAttribute('aria-pressed', String(fav));
@@ -239,10 +247,11 @@
   function updateMediaSession() {
     if (!('mediaSession' in navigator) || !state.current) return;
     const st = state.current;
-    const art = coverOf(st);
+    const np = state.np && state.np.song ? state.np : null;
+    const art = (np && np.art) || coverOf(st);
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: state.nowPlaying || st.name,
-      artist: state.nowPlaying ? st.name : (st.slogan || 'Ao vivo'),
+      title: np ? np.title || np.song : st.name,
+      artist: np ? [np.artist, st.name].filter(Boolean).join(' · ') : (st.slogan || 'Ao vivo'),
       album: state.title,
       artwork: art.startsWith('data:') ? [] : [{ src: new URL(art, location.href).href, sizes: '512x512' }],
     });
@@ -252,7 +261,7 @@
     if (!st) return;
     const changed = !state.current || state.current.id !== st.id;
     state.current = st;
-    state.nowPlaying = '';
+    state.np = null;
     store.set('last', st.id);
     if (changed) {
       state.recent = [st.id, ...state.recent.filter((id) => id !== st.id)].slice(0, 20);
@@ -345,47 +354,35 @@
     }
   }
 
-  // ---------- Metadados (música tocando) ----------
-  // Suporta servidores Icecast (status-json.xsl) e endpoints JSON simples
-  // ({"title": "..."} ou {"artist": "...", "title": "..."}). Requer CORS liberado no servidor.
+  // ---------- Música tocando (RDS) ----------
+  // O servidor lê o título do próprio streaming (Shoutcast/Icecast) e busca a capa do álbum.
 
-  function parseMeta(data, st) {
-    if (data && data.icestats) {
-      let src = data.icestats.source;
-      if (Array.isArray(src)) {
-        const path = (() => { try { return new URL(st.stream).pathname; } catch { return ''; } })();
-        src = src.find((s) => s.listenurl && path && s.listenurl.endsWith(path)) || src[0];
-      }
-      if (!src) return '';
-      return src.title || [src.artist, src.title].filter(Boolean).join(' - ') || '';
-    }
-    if (data && typeof data === 'object') {
-      const d = data.now_playing?.song || data.nowplaying || data.current || data;
-      if (d.text) return d.text;
-      return [d.artist, d.title].filter(Boolean).join(' - ');
-    }
-    return '';
+  function setArt(img, url, st) {
+    img.onerror = () => { img.onerror = null; setCover(img, st); };
+    img.src = url;
   }
 
   async function fetchMeta() {
     const st = state.current;
-    if (!st || !st.metadata || document.hidden && !state.playing) return;
+    if (!st || document.hidden) return;
     try {
-      const res = await fetch(st.metadata, { cache: 'no-store' });
+      const res = await fetch('api.php?action=nowplaying&id=' + encodeURIComponent(st.id));
       if (!res.ok) return;
-      const text = parseMeta(await res.json(), st).trim();
-      if (state.current !== st || text === state.nowPlaying) return;
-      state.nowPlaying = text;
-      updateInfo();
-    } catch { /* sem CORS ou offline: mantém o slogan */ }
+      const np = await res.json();
+      if (state.current !== st) return;
+      const before = state.np ? state.np.song + '|' + state.np.art : '';
+      state.np = np;
+      if (np.song + '|' + np.art !== before) updateInfo();
+    } catch { /* offline: mantém o que está na tela */ }
   }
 
   function startMeta() {
     clearInterval(state.metaTimer);
-    if (!state.current || !state.current.metadata) return;
+    if (!state.current) return;
     fetchMeta();
     state.metaTimer = setInterval(fetchMeta, META_INTERVAL);
   }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchMeta(); });
 
   // ---------- Timer para desligar ----------
 
@@ -667,7 +664,7 @@
     const url = new URL(location.href);
     url.search = '?r=' + encodeURIComponent(st.id);
     url.hash = '';
-    const data = { title: st.name, text: `Ouça ${st.name}${state.nowPlaying ? ' — ' + state.nowPlaying : ''}`, url: url.href };
+    const data = { title: st.name, text: `Ouça ${st.name}${state.np && state.np.song ? ' — tocando ' + state.np.song : ''}`, url: url.href };
     try {
       if (navigator.share) await navigator.share(data);
       else { await navigator.clipboard.writeText(url.href); toast('Link copiado!'); }

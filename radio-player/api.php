@@ -9,6 +9,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/lib/bootstrap.php';
+require __DIR__ . '/lib/nowplaying.php';
 
 header('X-Content-Type-Options: nosniff');
 
@@ -16,7 +17,9 @@ function api_out(array $data, int $code = 200): never
 {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: no-cache');
+    if (!headers_sent() && !preg_grep('/^Cache-Control:/i', headers_list())) {
+        header('Cache-Control: no-cache');
+    }
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -46,6 +49,27 @@ rp_use_tenant($slug);
 $action = (string) ($_GET['action'] ?? '');
 $isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 $in = $isPost ? ($_POST ?: (json_decode((string) file_get_contents('php://input'), true) ?: [])) : $_GET;
+
+// ----- Música tocando (RDS) -----
+if ($action === 'nowplaying') {
+    $cfg = rp_config();
+    $st = null;
+    foreach ($cfg['stations'] as $x) {
+        if ($x['id'] === (string) ($in['id'] ?? '') && !empty($x['active'])) {
+            $st = $x;
+        }
+    }
+    if (!$st) {
+        api_out(['error' => 'Rádio não encontrada.'], 404);
+    }
+    $np = np_now($st, !empty($cfg['settings']['np_art']));
+    header('Cache-Control: public, max-age=10');
+    api_out([
+        'song' => $np['song'], 'artist' => $np['artist'], 'title' => $np['title'],
+        'art' => !empty($cfg['settings']['np_art']) ? $np['art'] : '',
+        'at' => $np['at'], 'history' => array_slice($np['history'], 0, 10),
+    ]);
+}
 
 // ----- Pedidos de música / oração -----
 if ($action === 'request' && $isPost) {

@@ -8,6 +8,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../lib/bootstrap.php';
+require __DIR__ . '/../lib/nowplaying.php';
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -195,6 +196,14 @@ if (isset($_GET['ajax'])) {
     }
     if ($_GET['ajax'] === 'poll') {
         json_out(unread_requests());
+    }
+    if ($_GET['ajax'] === 'np') {
+        $cfg = rp_config();
+        $i = find_index($cfg['stations'], (string) ($_GET['id'] ?? ''));
+        if ($i < 0) {
+            json_out(['error' => 'Rádio não encontrada.'], 404);
+        }
+        json_out(np_now($cfg['stations'][$i], !empty($cfg['settings']['np_art']), true));
     }
     if ($_GET['ajax'] === 'chat') {
         $data = rp_chat_since(max(0, (int) ($_GET['since'] ?? 0)), true);
@@ -916,6 +925,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                     $s['site'] = rp_url($_POST['site'] ?? '');
                     $s['ad_rotate'] = min(60, max(3, (int) ($_POST['ad_rotate'] ?? 8)));
                     $s['popup_delay'] = min(60, max(0, (int) ($_POST['popup_delay'] ?? 3)));
+                    $s['np_art'] = !empty($_POST['np_art']);
                     if ($upload !== '' || !empty($_POST['logo_remove'])) {
                         rp_delete_upload($s['logo']);
                         $s['logo'] = $upload;
@@ -1143,8 +1153,11 @@ elseif ($tab === 'radios'):
         <label>Slogan<input name="slogan" maxlength="120" value="<?= h($st['slogan']) ?>" placeholder="A rádio que toca você"></label>
         <label>Cidade<input name="city" maxlength="80" value="<?= h($st['city']) ?>" placeholder="Goiânia - GO"></label>
       </div>
-      <label>URL dos metadados (opcional)<input name="metadata" type="url" value="<?= h($st['metadata']) ?>" placeholder="https://servidor.com:8000/status-json.xsl">
-        <small>Para mostrar a música tocando. Icecast: <code>/status-json.xsl</code>. O servidor precisa permitir acesso (CORS).</small></label>
+      <label>URL dos metadados (opcional, avançado)<input name="metadata" type="url" value="<?= h($st['metadata']) ?>" placeholder="Deixe em branco: o nome da música é lido do próprio streaming">
+        <small>O nome da música (RDS) é lido automaticamente do streaming Shoutcast/Icecast. Preencha só se o seu provedor indicar outra página de status.</small></label>
+      <?php if ($st['id']): ?>
+      <div class="np-test"><button class="btn sm" type="button" id="npTest" data-id="<?= h($st['id']) ?>">♫ Ver música tocando agora</button><span id="npResult" class="hint"></span></div>
+      <?php endif; ?>
       <div class="upload">
         <?php if ($st['logo']): ?><img src="<?= h(img_url($st['logo'])) ?>" alt=""><?php endif; ?>
         <label>Logo da rádio (quadrado, ex.: 500×500)<input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
@@ -1542,6 +1555,7 @@ elseif ($tab === 'aparencia'):
           <?php if ($s['logo']): ?><label class="check"><input type="checkbox" name="logo_remove" value="1"> Voltar ao ícone padrão</label><?php endif; ?>
         </div>
       </div>
+      <label class="check"><input type="checkbox" name="np_art" value="1" <?= !empty($s['np_art']) ? 'checked' : '' ?>> Mostrar a capa do álbum da música tocando (busca automática pelo nome da música)</label>
       <label>Sobre a rádio (aparece no fim do app)<textarea name="about" rows="3" maxlength="1000"><?= h($s['about']) ?></textarea></label>
 
       <h3>Contatos e redes sociais</h3>
@@ -1893,6 +1907,17 @@ else:
     } else {
       v.src = src;
     }
+  });
+  const npBtn = document.getElementById('npTest');
+  if (npBtn) npBtn.addEventListener('click', async () => {
+    const out = document.getElementById('npResult');
+    out.textContent = 'Consultando o streaming…';
+    try {
+      const d = await (await fetch('?ajax=np&id=' + encodeURIComponent(npBtn.dataset.id), { cache: 'no-store' })).json();
+      out.innerHTML = '';
+      if (d.art) { const im = document.createElement('img'); im.src = d.art; im.alt = ''; out.appendChild(im); }
+      out.append(d.song ? 'Tocando agora: ' + d.song : 'O streaming não está enviando o nome da música. Ative o envio de título (metadados) no programa de automação da rádio.');
+    } catch { out.textContent = 'Não foi possível consultar agora.'; }
   });
   const t = document.getElementById('testStream');
   if (t) {
