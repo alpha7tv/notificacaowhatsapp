@@ -396,8 +396,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
             // ----- Aparência -----
             case 'settings_save':
                 $upload = rp_save_upload('logo_file', 1024);
-                rp_update_config(function ($cfg) use ($upload) {
+                $bgUpload = rp_save_upload('background_file', 1920);
+                rp_update_config(function ($cfg) use ($upload, $bgUpload) {
                     $s = &$cfg['settings'];
+                    $s['theme'] = isset(RP_THEMES[$_POST['theme'] ?? '']) ? $_POST['theme'] : rp_theme($s);
+                    $s['accent_custom'] = !empty($_POST['accent_custom']);
+                    if ($bgUpload !== '' || !empty($_POST['background_remove'])) {
+                        rp_delete_upload($s['background']);
+                        $s['background'] = $bgUpload;
+                    }
                     $title = rp_clean($_POST['title'] ?? '', 60);
                     $s['title'] = $title !== '' ? $title : 'Rádio Player';
                     $s['short_name'] = rp_clean($_POST['short_name'] ?? '', 20);
@@ -419,7 +426,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                         }
                     }
                     if ($s['logo'] !== '') {
-                        rp_make_icons($s['logo'], $s['accent']);
+                        rp_make_icons($s['logo'], RP_THEMES[rp_theme($s)][2]);
                     }
                     return $cfg;
                 });
@@ -492,7 +499,7 @@ function action_btn(string $action, string $id, string $label, string $class = '
   <title>Painel · <?= h($s['title']) ?></title>
   <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="admin.css">
-  <style>:root { --accent: <?= h($s['accent']) ?>; }</style>
+  <style>:root { --accent: <?= h(rp_accent($s)) ?>; }</style>
 </head>
 <body>
 <?php if ($fatal): ?>
@@ -745,6 +752,27 @@ elseif ($tab === 'aparencia'):
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="settings_save">
       <input type="hidden" name="back" value="<?= $back ?>">
+      <h3>Tema visual</h3>
+      <div class="themes">
+        <?php foreach (RP_THEMES as $key => [$tname, $tdesc, $tbg, $taccent, $tpreview]): ?>
+          <label class="theme">
+            <input type="radio" name="theme" value="<?= h($key) ?>" <?= rp_theme($s) === $key ? 'checked' : '' ?>>
+            <span class="theme-preview" style="background: <?= h($tpreview) ?>">
+              <span class="tp-art" style="border-color: <?= h($taccent) ?>"></span>
+              <span class="tp-bar" style="background: <?= h($taccent) ?>"></span>
+              <span class="tp-play" style="background: <?= h($taccent) ?>"></span>
+            </span>
+            <span class="theme-text"><b><?= h($tname) ?></b><small><?= h($tdesc) ?></small></span>
+          </label>
+        <?php endforeach; ?>
+      </div>
+      <div class="upload">
+        <?php if ($s['background']): ?><img src="<?= h(img_url($s['background'])) ?>" alt="" class="wide"><?php endif; ?>
+        <label>Imagem de fundo (opcional)<input type="file" name="background_file" accept="image/png,image/jpeg,image/webp">
+          <small>Foto do estúdio, da igreja, do palco… Vertical (1080×1920) fica melhor. O tema aplica um tom por cima para o texto continuar legível.</small></label>
+        <?php if ($s['background']): ?><label class="check"><input type="checkbox" name="background_remove" value="1"> Remover imagem de fundo</label><?php endif; ?>
+      </div>
+
       <h3>Identidade</h3>
       <div class="grid2">
         <label>Nome do aplicativo *<input name="title" required maxlength="60" value="<?= h($s['title']) ?>"></label>
@@ -752,7 +780,10 @@ elseif ($tab === 'aparencia'):
       </div>
       <label>Descrição<input name="description" maxlength="160" value="<?= h($s['description']) ?>"></label>
       <div class="grid2">
-        <label>Cor principal<span class="color"><input type="color" name="accent" value="<?= h($s['accent']) ?>"><code><?= h($s['accent']) ?></code></span></label>
+        <div class="field">
+          <label class="check"><input type="checkbox" name="accent_custom" value="1" <?= !empty($s['accent_custom']) ? 'checked' : '' ?>> Usar uma cor própria no lugar da cor do tema</label>
+          <span class="color"><input type="color" name="accent" value="<?= h($s['accent']) ?>" aria-label="Cor própria"><code><?= h($s['accent']) ?></code></span>
+        </div>
         <div class="upload">
           <?php if ($s['logo']): ?><img src="<?= h(img_url($s['logo'])) ?>" alt=""><?php endif; ?>
           <label>Logo / ícone do app (quadrado, 512×512 ou maior)<input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp"></label>

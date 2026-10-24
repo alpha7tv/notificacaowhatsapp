@@ -1,6 +1,6 @@
 // Service worker: guarda a "casca" do app para abrir rápido e funcionar como aplicativo.
 // Os streams de áudio NUNCA passam pelo cache.
-const CACHE = 'radio-player-v2';
+const CACHE = 'radio-player-v3';
 const SHELL = [
   './',
   'index.html',

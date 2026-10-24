@@ -114,9 +114,11 @@
       const cur = state.current && state.current.id === s.id;
       const sub = [s.genre, s.city].filter(Boolean).join(' · ') || s.slogan || '';
       return `<button class="station${cur ? ' current' : ''}${cur && state.playing ? ' is-playing' : ''}" data-id="${escapeHtml(s.id)}">
-        <img class="cover sm" alt="" loading="lazy" data-cover="${escapeHtml(s.id)}">
+        <span class="tile-art">
+          <img class="cover" alt="" loading="lazy" data-cover="${escapeHtml(s.id)}">
+          <span class="playing-ind" aria-hidden="true"><i></i><i></i><i></i></span>
+        </span>
         <span class="info"><strong>${escapeHtml(s.name)}</strong><small>${escapeHtml(sub)}</small></span>
-        <span class="playing-ind" aria-hidden="true"><i></i><i></i><i></i></span>
         ${state.favorites.has(s.id) ? '<svg class="fav" aria-label="Favorita"><use href="#i-heart"/></svg>' : ''}
       </button>`;
     }).join('');
@@ -142,6 +144,7 @@
       btn.setAttribute('aria-label', playing ? 'Pausar' : 'Tocar');
     }
     $('#eq').classList.toggle('on', kind === 'live');
+    document.body.classList.toggle('is-live', kind === 'live');
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : (state.current ? 'paused' : 'none');
     markCurrent();
   }
@@ -171,7 +174,8 @@
     $('#miniNow').textContent = subtitle();
     setCover($('#cover'), st);
     setCover($('#miniCover'), st);
-    $('#playerBg').style.backgroundImage = `url("${coverOf(st).replace(/"/g, '%22')}")`;
+    const bgImg = (state.config && state.config.background) || coverOf(st);
+    $('#playerBg').style.backgroundImage = `url("${bgImg.replace(/"/g, '%22')}")`;
     const fav = state.favorites.has(st.id);
     $('#favBtn').setAttribute('aria-pressed', String(fav));
     $('#favBtn').setAttribute('aria-label', fav ? 'Remover dos favoritos' : 'Favoritar');
@@ -344,7 +348,8 @@
 
   function updateSleepLabel() {
     const left = state.sleepAt - Date.now();
-    $('#timerLabel').textContent = left > 0 ? `Desliga em ${Math.ceil(left / 60000)} min` : 'Desligar em…';
+    $('#timerLabel').textContent = left > 0 ? `${Math.ceil(left / 60000)}m` : '';
+    $('#timerBtn').setAttribute('aria-label', left > 0 ? `Desliga em ${Math.ceil(left / 60000)} minutos` : 'Desligar automaticamente');
   }
   setInterval(updateSleepLabel, 30000);
 
@@ -566,6 +571,8 @@
       `<a href="${escapeHtml(cfg.contacts[k])}" target="_blank" rel="noopener" aria-label="${label}" title="${label}"><svg><use href="#i-${k}"/></svg></a>`
     ).join('');
     $('#about').hidden = !cfg.about && !links.length;
+    $('#playerSocial').innerHTML = $('#contacts').innerHTML;
+    $('#playerSocial').hidden = !links.length;
   }
 
   // ---------- Instalação (multiplataforma) ----------
@@ -619,6 +626,52 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
+  // ---------- Temas visuais ----------
+
+  const SKIN_FONTS = {
+    gospel: 'family=Cinzel:wght@600;700&family=Nunito+Sans:wght@400;600;700;800',
+    sertanejo: 'family=Oswald:wght@500;600;700&family=Nunito+Sans:wght@400;600;700;800',
+    poprock: 'family=Unbounded:wght@600;700&family=Nunito+Sans:wght@400;600;700;800',
+    raiz: 'family=Rye&family=Lora:wght@400;600;700',
+    forro: 'family=Baloo+2:wght@500;600;700;800',
+  };
+
+  function applySkin(skin) {
+    const root = document.documentElement;
+    root.dataset.skin = skin in SKIN_FONTS ? skin : 'classico';
+    let link = document.getElementById('skinFonts');
+    const fonts = SKIN_FONTS[root.dataset.skin];
+    if (fonts) {
+      if (!link) {
+        link = document.createElement('link');
+        link.id = 'skinFonts';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      link.href = `https://fonts.googleapis.com/css2?${fonts}&display=swap`;
+    } else if (link) {
+      link.remove();
+    }
+    // Cor da barra do navegador acompanha o fundo do tema.
+    const bg = getComputedStyle(root).getPropertyValue('--bg').trim();
+    if (bg) document.querySelectorAll('meta[name=theme-color]').forEach((m) => m.setAttribute('content', bg));
+  }
+
+  // Equalizador: barras com ritmos diferentes para parecer música de verdade.
+  (() => {
+    const box = $('#eq');
+    const n = 36;
+    let html = '';
+    for (let i = 0; i < n; i++) {
+      const center = 1 - Math.abs(i - n / 2) / (n / 2);
+      const h = (0.35 + center * 0.55 + Math.random() * 0.25).toFixed(2);
+      const d = (0.45 + Math.random() * 0.7).toFixed(2);
+      const delay = (-Math.random() * 1.2).toFixed(2);
+      html += `<i style="--h:${Math.min(1, h)};--d:${d}s;--delay:${delay}s"></i>`;
+    }
+    box.innerHTML = html;
+  })();
+
   // ---------- Inicialização ----------
 
   function applyConfig(cfg) {
@@ -626,10 +679,13 @@
     state.title = cfg.title || 'Rádio Player';
     $('#appTitle').textContent = state.title;
     if (!state.current) document.title = state.title;
-    if (cfg.accent) {
-      document.documentElement.style.setProperty('--accent', cfg.accent);
-      document.querySelectorAll('meta[name=theme-color]').forEach((m) => m.setAttribute('content', cfg.accent));
-    }
+    applySkin(cfg.theme || 'classico');
+    const root = document.documentElement;
+    if (cfg.accent) root.style.setProperty('--accent', cfg.accent);
+    else root.style.removeProperty('--accent');
+    root.classList.toggle('has-photo', !!cfg.background);
+    if (cfg.background) root.style.setProperty('--bg-photo', `url("${cfg.background.replace(/"/g, '%22')}")`);
+    else root.style.removeProperty('--bg-photo');
     if (cfg.logo) $('#appLogo').src = cfg.logo;
     if (cfg.icon) $('#touchIcon').href = cfg.icon;
 

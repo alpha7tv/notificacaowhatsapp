@@ -15,6 +15,8 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" id="touchIcon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/app.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -88,38 +90,39 @@
     <div class="player-bg" id="playerBg"></div>
     <div class="player-inner">
       <div class="player-top">
-        <button class="icon-btn" id="closePlayer" aria-label="Fechar player"><svg><use href="#i-down"/></svg></button>
+        <button class="icon-btn glass" id="closePlayer" aria-label="Fechar player"><svg><use href="#i-down"/></svg></button>
         <span class="status" id="status">Parado</span>
-        <button class="icon-btn" id="shareBtn" aria-label="Compartilhar"><svg><use href="#i-share"/></svg></button>
+        <button class="icon-btn glass fav-btn" id="favBtn" aria-label="Favoritar" aria-pressed="false"><svg><use href="#i-heart"/></svg></button>
       </div>
 
       <div class="art-wrap">
-        <img class="cover lg" id="cover" alt="">
-        <div class="eq" id="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="art">
+          <span class="art-ring" aria-hidden="true"></span>
+          <img class="cover lg" id="cover" alt="">
+        </div>
       </div>
 
       <div class="meta">
-        <div class="meta-text">
-          <h2 id="stationName">—</h2>
-          <p id="nowPlaying">Escolha uma rádio</p>
-        </div>
-        <button class="icon-btn fav-btn" id="favBtn" aria-label="Favoritar" aria-pressed="false"><svg><use href="#i-heart"/></svg></button>
+        <h2 id="stationName">—</h2>
+        <p id="nowPlaying">Escolha uma rádio</p>
       </div>
 
-      <div class="controls">
-        <button class="icon-btn lg" id="prevBtn" aria-label="Rádio anterior"><svg><use href="#i-prev"/></svg></button>
-        <button class="play lg" id="playBtn" aria-label="Tocar"><svg><use href="#i-play"/></svg></button>
-        <button class="icon-btn lg" id="nextBtn" aria-label="Próxima rádio"><svg><use href="#i-next"/></svg></button>
-      </div>
+      <div class="bars" id="eq" aria-hidden="true"></div>
 
       <div class="volume">
         <button class="icon-btn" id="muteBtn" aria-label="Silenciar"><svg><use href="#i-vol"/></svg></button>
         <input type="range" id="volume" min="0" max="1" step="0.01" value="1" aria-label="Volume">
       </div>
 
-      <div class="extras">
-        <button class="chip" id="timerBtn"><svg><use href="#i-timer"/></svg><span id="timerLabel">Desligar em…</span></button>
+      <div class="controls">
+        <button class="icon-btn side" id="timerBtn" aria-label="Desligar automaticamente"><svg><use href="#i-timer"/></svg><small id="timerLabel"></small></button>
+        <button class="icon-btn lg" id="prevBtn" aria-label="Rádio anterior"><svg><use href="#i-prev"/></svg></button>
+        <button class="play lg" id="playBtn" aria-label="Tocar"><svg><use href="#i-play"/></svg></button>
+        <button class="icon-btn lg" id="nextBtn" aria-label="Próxima rádio"><svg><use href="#i-next"/></svg></button>
+        <button class="icon-btn side" id="shareBtn" aria-label="Compartilhar"><svg><use href="#i-share"/></svg></button>
       </div>
+
+      <div class="player-social" id="playerSocial" hidden></div>
 
       <aside class="ad-slot ad-player" id="adPlayer" aria-label="Publicidade" hidden></aside>
     </div>

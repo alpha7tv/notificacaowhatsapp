@@ -23,6 +23,33 @@ const AD_POSITIONS = [
     'popup' => 'Popup ao abrir o app',
 ];
 
+/** Temas visuais do app: nome, descrição, cor de fundo, cor de destaque e prévia (CSS). */
+const RP_THEMES = [
+    'gospel' => ['Gospel', 'Claro e celestial, luz dourada e anel brilhante na capa.', '#eef1fb', '#9a6b14',
+        'radial-gradient(110% 60% at 50% -10%, #ffd580, transparent 62%), linear-gradient(180deg, #f7f3ff, #dfe6fb)'],
+    'sertanejo' => ['Sertanejo', 'Pôr do sol em tons quentes de laranja, moderno e marcante.', '#1c0d07', '#ff8a1f',
+        'radial-gradient(95% 60% at 50% -5%, #ff8a24, transparent 65%), linear-gradient(180deg, #3d1708, #1c0d07)'],
+    'poprock' => ['Pop Rock', 'Escuro com neon roxo e magenta, equalizador vibrante.', '#0e0717', '#ff2e93',
+        'radial-gradient(75% 50% at 12% 8%, #a028ff, transparent 70%), radial-gradient(65% 45% at 92% 88%, #ff288c, transparent 70%), #0e0717'],
+    'raiz' => ['Sertanejo Raiz', 'Madeira, couro e costura; capa como foto antiga.', '#2a1a0f', '#d9a441',
+        'repeating-linear-gradient(90deg, transparent 0 14px, rgba(0,0,0,.3) 14px 15px), linear-gradient(180deg, #4b2d18, #2a1a0f)'],
+    'forro' => ['Forró', 'Noite de São João com bandeirinhas coloridas.', '#0f1c48', '#ffd23f',
+        'linear-gradient(90deg, #ff4d4d 0 25%, #ffd23f 25% 50%, #2ec4b6 50% 75%, #ff7ac6 75%) top / 100% 8px no-repeat, linear-gradient(180deg, #1b2f74, #0f1c48)'],
+    'classico' => ['Clássico', 'Simples, segue o modo claro/escuro do aparelho.', '#0f1115', '#e5484d',
+        'linear-gradient(135deg, #f4f5f7 50%, #0f1115 50%)'],
+];
+
+function rp_theme(array $s): string
+{
+    return isset(RP_THEMES[$s['theme'] ?? '']) ? $s['theme'] : 'poprock';
+}
+
+/** Cor de destaque efetiva: a escolhida no painel ou a do tema. */
+function rp_accent(array $s): string
+{
+    return !empty($s['accent_custom']) ? $s['accent'] : RP_THEMES[rp_theme($s)][3];
+}
+
 function rp_defaults(): array
 {
     $genres = [];
@@ -34,7 +61,10 @@ function rp_defaults(): array
             'title' => 'Rádio Player',
             'short_name' => 'Rádio',
             'description' => 'Ouça nossas rádios ao vivo, onde estiver.',
+            'theme' => 'poprock',
             'accent' => '#e5484d',
+            'accent_custom' => false,
+            'background' => '',
             'logo' => '',
             'about' => '',
             'whatsapp' => '',

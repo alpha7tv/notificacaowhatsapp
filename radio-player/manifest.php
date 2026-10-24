@@ -16,8 +16,8 @@ echo json_encode([
     'scope' => './',
     'display' => 'standalone',
     'orientation' => 'any',
-    'background_color' => '#0f1115',
-    'theme_color' => $s['accent'],
+    'background_color' => RP_THEMES[rp_theme($s)][2],
+    'theme_color' => RP_THEMES[rp_theme($s)][2],
     'categories' => ['music', 'entertainment'],
     'icons' => [
         ['src' => rp_icon('icon-192.png'), 'sizes' => '192x192', 'type' => 'image/png'],

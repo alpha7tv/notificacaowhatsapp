@@ -18,7 +18,7 @@ Usa PHP 8.1+ com GD e fileinfo. **Não precisa de banco de dados**: os dados fic
 | **Rádios** | Nome, **URL do streaming**, estilo, logo, slogan, cidade, metadados; ordem, no ar/fora do ar, botão "Testar áudio" |
 | **Estilos** | Criar, renomear, ordenar e excluir. Já vem com: Gospel, Sertanejo, Pop Rock, Sertanejo Raiz e Forró |
 | **Publicidade** | Anúncios com imagem ou texto, link (site ou WhatsApp), período de exibição, pausar e estatísticas |
-| **Aparência** | Nome do app, cor principal, logo (gera os ícones do app), texto "Sobre", WhatsApp/Instagram/Facebook/YouTube/site |
+| **Aparência** | **Tema visual** (Gospel, Sertanejo, Pop Rock, Sertanejo Raiz, Forró, Clássico), imagem de fundo, nome do app, cor própria (opcional), logo (gera os ícones do app), texto "Sobre", WhatsApp/Instagram/Facebook/YouTube/site |
 | **Conta** | Trocar usuário e senha |
 
 No **primeiro acesso** ao `/admin/` o painel pede para criar o usuário e a senha, por isso **faça isso logo
