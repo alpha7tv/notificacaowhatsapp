@@ -32,6 +32,7 @@
     <symbol id="i-timer" viewBox="0 0 24 24"><path d="M9 1h6v2H9zM12 5a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm-1 2h2v4.6l3 1.8-1 1.7-4-2.4z"/></symbol>
     <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 2l5 5-1.4 1.4L13 5.8V15h-2V5.8L8.4 8.4 7 7zM5 11h3v2H6v7h12v-7h-2v-2h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/></symbol>
     <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4 8h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm3.5 3.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM14 12v1.5h5V12zm0 3v1.5h5V15zM16.6 2.4l.8 1.8L7.9 8H5.3z"/></symbol>
+    <symbol id="i-tv" viewBox="0 0 24 24"><path d="M4 6h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm0 2v9h16V8zm4.3-5.7L12 5.6l3.7-3.3 1.3 1.5L13.6 7h-3.2L7 3.8zM8 21h8v1H8z"/></symbol>
     <symbol id="i-install" viewBox="0 0 24 24"><path d="M11 3h2v9.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></symbol>
     <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2c-1.5 0-3-.4-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.4.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1 2.7c.1.2 1.8 2.8 4.4 3.9 1.6.7 2.3.8 3.1.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2 0-.1-.2-.2-.4-.3z"/></symbol>
@@ -49,6 +50,11 @@
       </div>
       <button class="install-btn" id="installBtn" hidden><svg><use href="#i-install"/></svg>Instalar app</button>
     </header>
+
+    <div class="modes" id="modes" role="tablist" hidden>
+      <button role="tab" class="mode" data-mode="radio" aria-selected="true"><svg><use href="#i-radio"/></svg>Rádios</button>
+      <button role="tab" class="mode" data-mode="tv" aria-selected="false"><svg><use href="#i-tv"/></svg>TV ao vivo</button>
+    </div>
 
     <div class="search">
       <svg><use href="#i-search"/></svg>
@@ -125,6 +131,30 @@
       <div class="player-social" id="playerSocial" hidden></div>
 
       <aside class="ad-slot ad-player" id="adPlayer" aria-label="Publicidade" hidden></aside>
+    </div>
+  </section>
+
+  <!-- Tela da TV -->
+  <section class="tvscreen" id="tvScreen" aria-hidden="true" aria-label="TV ao vivo">
+    <div class="tv-inner">
+      <div class="player-top">
+        <button class="icon-btn glass" id="closeTv" aria-label="Fechar TV"><svg><use href="#i-down"/></svg></button>
+        <span class="status live">Ao vivo</span>
+        <button class="icon-btn glass" id="shareTv" aria-label="Compartilhar canal"><svg><use href="#i-share"/></svg></button>
+      </div>
+      <div class="tv-frame" id="tvFrame"></div>
+      <div class="tv-info">
+        <div class="tv-text">
+          <h2 id="tvName"></h2>
+          <p id="tvDesc"></p>
+        </div>
+        <button class="icon-btn glass fav-btn" id="tvFav" aria-label="Favoritar canal" aria-pressed="false"><svg><use href="#i-heart"/></svg></button>
+      </div>
+      <aside class="ad-slot ad-player" id="adTv" aria-label="Publicidade" hidden></aside>
+      <div class="tv-more-wrap" id="tvMoreWrap" hidden>
+        <h3>Outros canais</h3>
+        <div class="tv-more" id="tvMore"></div>
+      </div>
     </div>
   </section>
 

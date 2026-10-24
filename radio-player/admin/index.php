@@ -169,6 +169,8 @@ if ($tenant !== null && !isset($clients[$tenant])) {
 }
 rp_use_tenant($tenant);
 $client = $tenant !== null ? $clients[$tenant] : null;
+// Clientes antigos (sem a opção) têm a Web TV liberada.
+$tvAllowed = $client !== null && ($client['allow_tv'] ?? true);
 $fatal = null;
 try {
     rp_ensure_dirs();
@@ -309,6 +311,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                         'status' => $status,
                         'expires' => rp_date($_POST['expires'] ?? ''),
                         'max_stations' => min(999, max(0, (int) ($_POST['max_stations'] ?? 0))),
+                        'allow_tv' => !empty($_POST['allow_tv']),
+                        'max_tvs' => min(999, max(0, (int) ($_POST['max_tvs'] ?? 0))),
                         'phone' => rp_clean($_POST['phone'] ?? '', 40),
                         'notes' => rp_clean_text($_POST['notes'] ?? '', 500),
                         'created_at' => $old['created_at'],
@@ -469,6 +473,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                     return $cfg;
                 });
                 go('tab=radios');
+
+            // ----- Web TV -----
+            case 'tv_save':
+                if (!$tvAllowed) {
+                    throw new RuntimeException('A Web TV não está liberada no seu plano. Fale com o suporte.');
+                }
+                $id = (string) ($_POST['id'] ?? '');
+                $name = rp_clean($_POST['name'] ?? '', 80);
+                if ($name === '') {
+                    throw new RuntimeException('Informe o nome do canal.');
+                }
+                $link = trim((string) ($_POST['link'] ?? ''));
+                $wantType = (string) ($_POST['type'] ?? 'auto');
+                [$type, $src] = rp_parse_tv($link, isset(TV_TYPES[$wantType]) ? $wantType : 'auto');
+                $limit = (int) ($client['max_tvs'] ?? 0);
+                if ($id === '' && $limit > 0 && count(rp_config()['tvs']) >= $limit) {
+                    throw new RuntimeException("Seu plano permite até {$limit} canal(is) de TV. Fale com o suporte para ampliar.");
+                }
+                $upload = rp_save_upload('logo_file', 1280);
+                rp_update_config(function ($cfg) use ($id, $name, $link, $wantType, $type, $src, $upload) {
+                    $i = $id !== '' ? find_index($cfg['tvs'], $id) : -1;
+                    $old = $i >= 0 ? $cfg['tvs'][$i] : ['id' => rp_id(), 'logo' => ''];
+                    $logo = $old['logo'];
+                    if ($upload !== '' || !empty($_POST['logo_remove'])) {
+                        rp_delete_upload($logo);
+                        $logo = $upload;
+                    }
+                    $tv = [
+                        'id' => $old['id'],
+                        'name' => $name,
+                        'link' => mb_substr($link, 0, 2000),
+                        'type_choice' => isset(TV_TYPES[$wantType]) ? $wantType : 'auto',
+                        'type' => $type,
+                        'src' => $src,
+                        'logo' => $logo,
+                        'genre' => in_array($_POST['genre'] ?? '', array_column($cfg['genres'], 'id'), true) ? $_POST['genre'] : '',
+                        'description' => rp_clean($_POST['description'] ?? '', 160),
+                        'active' => !empty($_POST['active']),
+                    ];
+                    if ($i >= 0) {
+                        $cfg['tvs'][$i] = $tv;
+                    } else {
+                        $cfg['tvs'][] = $tv;
+                    }
+                    return $cfg;
+                });
+                flash('Canal salvo (' . TV_TYPES[$type] . ').');
+                go('tab=tv');
+
+            case 'tv_delete':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['tvs'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        rp_delete_upload($cfg['tvs'][$i]['logo'] ?? '');
+                        array_splice($cfg['tvs'], $i, 1);
+                    }
+                    return $cfg;
+                });
+                flash('Canal excluído.');
+                go('tab=tv');
+
+            case 'tv_move':
+                rp_update_config(function ($cfg) {
+                    $cfg['tvs'] = move_item($cfg['tvs'], (string) $_POST['id'], (int) $_POST['dir']);
+                    return $cfg;
+                });
+                go('tab=tv');
+
+            case 'tv_toggle':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['tvs'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        $cfg['tvs'][$i]['active'] = empty($cfg['tvs'][$i]['active']);
+                    }
+                    return $cfg;
+                });
+                go('tab=tv');
 
             // ----- Estilos -----
             case 'genre_add':
@@ -736,7 +817,11 @@ if ($tenant === null) {
 }
 $edit = (string) ($_GET['edit'] ?? '');
 if ($tenant !== null) {
-    $tabs = ['inicio' => 'Início', 'radios' => 'Rádios', 'estilos' => 'Estilos', 'publicidade' => 'Publicidade', 'aparencia' => 'Aparência'];
+    $tabs = ['inicio' => 'Início', 'radios' => 'Rádios'];
+    if ($tvAllowed) {
+        $tabs['tv'] = 'Web TV';
+    }
+    $tabs += ['estilos' => 'Estilos', 'publicidade' => 'Publicidade', 'aparencia' => 'Aparência'];
     if ($role === 'client') {
         $tabs['conta'] = 'Senha';
     }
@@ -842,6 +927,7 @@ if ($tab === 'inicio'):
     <div class="head"><h2>Visão geral</h2><span class="plan">Plano: <b><?= h(due_label($client)) ?></b><?= $client['max_stations'] ? ' · até ' . (int) $client['max_stations'] . ' rádio(s)' : '' ?></span></div>
     <div class="stats">
       <a class="stat" href="?tab=radios"><strong><?= count($activeSt) ?></strong><span>rádios no ar<?= count($cfg['stations']) > count($activeSt) ? ' (de ' . count($cfg['stations']) . ')' : '' ?></span></a>
+      <?php if ($tvAllowed): ?><a class="stat" href="?tab=tv"><strong><?= count(array_filter($cfg['tvs'], fn ($x) => !empty($x['active']))) ?></strong><span>canais de TV no ar</span></a><?php endif; ?>
       <a class="stat" href="?tab=estilos"><strong><?= count($cfg['genres']) ?></strong><span>estilos</span></a>
       <a class="stat" href="?tab=publicidade"><strong><?= count($liveAds) ?></strong><span>anúncios no ar</span></a>
       <a class="stat" href="?tab=publicidade"><strong><?= number_format($clicks, 0, ',', '.') ?></strong><span>cliques em anúncios · <?= number_format($views, 0, ',', '.') ?> exibições</span></a>
@@ -930,6 +1016,84 @@ elseif ($tab === 'radios'):
       <?php endforeach; ?>
     </div>
     <p class="hint">A ordem aqui é a ordem em que as rádios aparecem no aplicativo.</p>
+    <?php endif; ?>
+<?php endif; ?>
+
+<?php
+// ======================= WEB TV =======================
+elseif ($tab === 'tv'):
+    $genreNames = array_column($cfg['genres'], 'name', 'id');
+    if ($edit !== ''):
+        $i = find_index($cfg['tvs'], $edit);
+        $tv = $i >= 0 ? $cfg['tvs'][$i] : ['id' => '', 'name' => '', 'link' => '', 'type_choice' => 'auto', 'type' => '', 'src' => '', 'logo' => '', 'genre' => '', 'description' => '', 'active' => true];
+?>
+    <div class="head"><h2><?= $tv['id'] ? 'Editar canal' : 'Novo canal de TV' ?></h2><a class="btn sm ghost" href="?tab=tv">← Voltar</a></div>
+    <form method="post" enctype="multipart/form-data" class="card form">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="tv_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <input type="hidden" name="id" value="<?= h($tv['id']) ?>">
+      <div class="grid2">
+        <label>Nome do canal *<input name="name" required maxlength="80" value="<?= h($tv['name']) ?>" placeholder="Ex.: TV Nova Geração"></label>
+        <label>Estilo
+          <select name="genre">
+            <option value="">— sem estilo —</option>
+            <?php foreach ($cfg['genres'] as $g): ?><option value="<?= h($g['id']) ?>" <?= $g['id'] === $tv['genre'] ? 'selected' : '' ?>><?= h($g['name']) ?></option><?php endforeach; ?>
+          </select>
+        </label>
+      </div>
+      <label>Link da transmissão *
+        <textarea name="link" rows="3" required placeholder="https://servidor.com/live/canal/playlist.m3u8&#10;ou https://www.youtube.com/watch?v=…&#10;ou o código &lt;iframe …&gt; do seu provedor"><?= h($tv['link']) ?></textarea>
+        <small>Aceita link <b>.m3u8</b> (HLS), vídeo MP4, link do <b>YouTube</b> (vídeo, live ou canal ao vivo), Vimeo ou o <b>código de incorporação</b> (iframe) do seu provedor. Precisa ser <b>https</b>.</small>
+      </label>
+      <div class="grid2">
+        <label>Tipo
+          <select name="type">
+            <?php foreach (TV_TYPES as $k => $label): ?><option value="<?= $k ?>" <?= $tv['type_choice'] === $k ? 'selected' : '' ?>><?= h($label) ?></option><?php endforeach; ?>
+          </select>
+          <small><?= $tv['type'] ? 'Detectado: ' . h(TV_TYPES[$tv['type']]) . '.' : 'Deixe em "Detectar" — mude só se o canal não abrir.' ?></small>
+        </label>
+        <label>Descrição curta<input name="description" maxlength="160" value="<?= h($tv['description']) ?>" placeholder="Programação 24 horas"></label>
+      </div>
+      <div class="upload">
+        <?php if ($tv['logo']): ?><img src="<?= h(img_url($tv['logo'])) ?>" alt="" class="wide"><?php endif; ?>
+        <label>Imagem do canal (logo ou capa 16:9, ex.: 1280×720)<input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+        <?php if ($tv['logo']): ?><label class="check"><input type="checkbox" name="logo_remove" value="1"> Remover imagem</label><?php endif; ?>
+      </div>
+      <label class="check"><input type="checkbox" name="active" value="1" <?= !empty($tv['active']) ? 'checked' : '' ?>> Canal no ar (aparece no aplicativo)</label>
+      <div class="actions"><button class="btn primary">Salvar canal</button></div>
+    </form>
+    <?php if ($tv['src']): ?>
+    <div class="card">
+      <h3>Prévia</h3>
+      <div class="tv-preview" data-type="<?= h($tv['type']) ?>" data-src="<?= h($tv['src']) ?>"></div>
+      <p class="hint">Se a prévia não carregar aqui, teste também no app: alguns provedores só liberam o player no seu domínio.</p>
+    </div>
+    <?php endif; ?>
+<?php else: ?>
+    <div class="head"><h2>Web TV</h2><a class="btn primary" href="?tab=tv&edit=new">+ Novo canal</a></div>
+    <?php if (!$cfg['tvs']): ?>
+      <p class="empty">Nenhum canal de TV cadastrado. Cadastre o link da sua web TV para ela aparecer no app.</p>
+    <?php else: ?>
+    <div class="rows">
+      <?php foreach ($cfg['tvs'] as $tv): ?>
+      <div class="row<?= empty($tv['active']) ? ' off' : '' ?>">
+        <span class="thumb wide"><?php if ($tv['logo']): ?><img src="<?= h(img_url($tv['logo'])) ?>" alt=""><?php else: ?>TV<?php endif; ?></span>
+        <div class="row-main">
+          <strong><?= h($tv['name']) ?></strong>
+          <small><?= h(TV_TYPES[$tv['type']] ?? $tv['type']) ?> · <?= h($genreNames[$tv['genre']] ?? 'Sem estilo') ?> · <span class="mono"><?= h($tv['src']) ?></span></small>
+        </div>
+        <span class="badge <?= !empty($tv['active']) ? 'on' : '' ?>"><?= !empty($tv['active']) ? 'No ar' : 'Fora do ar' ?></span>
+        <div class="row-actions">
+          <?= action_btn('tv_move', $tv['id'], '↑', 'btn sm icon', ['dir' => -1]) ?>
+          <?= action_btn('tv_move', $tv['id'], '↓', 'btn sm icon', ['dir' => 1]) ?>
+          <?= action_btn('tv_toggle', $tv['id'], !empty($tv['active']) ? 'Tirar do ar' : 'Colocar no ar') ?>
+          <a class="btn sm" href="?tab=tv&edit=<?= h($tv['id']) ?>">Editar</a>
+          <?= action_btn('tv_delete', $tv['id'], 'Excluir', 'btn sm danger', [], 'Excluir o canal "' . $tv['name'] . '"?') ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
     <?php endif; ?>
 <?php endif; ?>
 
@@ -1120,7 +1284,7 @@ elseif ($tab === 'clientes'):
     if ($edit !== ''):
         $c = $clients[$edit] ?? null;
         $isNew = $c === null;
-        $c ??= ['name' => '', 'user' => '', 'status' => 'active', 'expires' => date('Y-m-d', strtotime('+1 month')), 'max_stations' => 0, 'phone' => '', 'notes' => ''];
+        $c ??= ['name' => '', 'user' => '', 'status' => 'active', 'expires' => date('Y-m-d', strtotime('+1 month')), 'max_stations' => 0, 'allow_tv' => true, 'max_tvs' => 0, 'phone' => '', 'notes' => ''];
         $suggestPass = substr(str_replace(['+', '/', '='], '', base64_encode(random_bytes(9))), 0, 10);
 ?>
     <div class="head"><h2><?= $isNew ? 'Novo cliente' : 'Editar cliente' ?></h2><a class="btn sm ghost" href="?tab=clientes">← Voltar</a></div>
@@ -1163,6 +1327,10 @@ elseif ($tab === 'clientes'):
             <a href="#" onclick="const e=document.getElementById('cExpires');const d=new Date();d.setFullYear(d.getFullYear()+1);e.value=d.toISOString().slice(0,10);return false">+1 ano</a> ·
             <a href="#" onclick="document.getElementById('cExpires').value='';return false">sem vencimento</a></small></label>
         <label>Limite de rádios<input type="number" name="max_stations" min="0" max="999" value="<?= (int) $c['max_stations'] ?>"><small>0 = sem limite.</small></label>
+        <div class="field">
+          <label class="check"><input type="checkbox" name="allow_tv" value="1" <?= ($c['allow_tv'] ?? true) ? 'checked' : '' ?>> Permitir Web TV</label>
+          <label>Limite de canais de TV<input type="number" name="max_tvs" min="0" max="999" value="<?= (int) ($c['max_tvs'] ?? 0) ?>"><small>0 = sem limite.</small></label>
+        </div>
       </div>
       <label>Observações (só você vê)<textarea name="notes" rows="2" maxlength="500"><?= h($c['notes']) ?></textarea></label>
       <div class="actions"><button class="btn primary"><?= $isNew ? 'Criar cliente' : 'Salvar' ?></button></div>
@@ -1228,6 +1396,7 @@ elseif ($tab === 'clientes'):
           $state = rp_client_state($c);
           $cc = rp_read_json(RP_TENANTS . '/' . $slug . '/config.json', []);
           $nSt = count($cc['stations'] ?? []);
+          $nTv = count($cc['tvs'] ?? []);
           $logo = $cc['settings']['logo'] ?? '';
           $dl = days_left($c);
           $soon = $state === 'active' && $dl !== null && $dl <= 7;
@@ -1236,7 +1405,7 @@ elseif ($tab === 'clientes'):
         <span class="thumb"><?php if ($logo): ?><img src="<?= h(img_url($logo)) ?>" alt=""><?php else: ?><?= h(mb_strtoupper(mb_substr($c['name'], 0, 2))) ?><?php endif; ?></span>
         <div class="row-main">
           <strong><?= h($c['name']) ?><?php if ($platform['default_tenant'] === $slug): ?> <span class="badge">endereço principal</span><?php endif; ?></strong>
-          <small><a href="<?= h(app_url($slug)) ?>" target="_blank" rel="noopener" class="mono">/r/<?= h($slug) ?>/</a> · <?= $c['user'] !== '' ? 'login: ' . h($c['user']) : 'sem login de cliente' ?> · <?= $nSt ?> rádio(s)<?= $c['max_stations'] ? ' de ' . (int) $c['max_stations'] : '' ?></small>
+          <small><a href="<?= h(app_url($slug)) ?>" target="_blank" rel="noopener" class="mono">/r/<?= h($slug) ?>/</a> · <?= $c['user'] !== '' ? 'login: ' . h($c['user']) : 'sem login de cliente' ?> · <?= $nSt ?> rádio(s)<?= $c['max_stations'] ? ' de ' . (int) $c['max_stations'] : '' ?><?= ($c['allow_tv'] ?? true) ? ' · ' . $nTv . ' canal(is) de TV' . (!empty($c['max_tvs']) ? ' de ' . (int) $c['max_tvs'] : '') : ' · sem TV' ?></small>
         </div>
         <span class="badge <?= $state === 'active' ? 'on' : 'bad' ?>"><?= CLIENT_STATES[$state] ?></span>
         <small class="due<?= $soon ? ' soon' : '' ?><?= $state === 'expired' ? ' late' : '' ?>"><?= h(due_label($c)) ?></small>
@@ -1307,6 +1476,29 @@ else:
     img.src = URL.createObjectURL(f);
   }));
   document.querySelectorAll('input[type=color]').forEach((c) => c.addEventListener('input', () => { c.nextElementSibling.textContent = c.value; }));
+  // Prévia do canal de TV no painel.
+  document.querySelectorAll('.tv-preview').forEach((box) => {
+    const { type, src } = box.dataset;
+    if (type === 'youtube' || type === 'embed') {
+      const f = document.createElement('iframe');
+      f.src = src.replace('autoplay=1', 'autoplay=0');
+      f.allow = 'autoplay; fullscreen; picture-in-picture; encrypted-media';
+      f.allowFullscreen = true;
+      box.appendChild(f);
+      return;
+    }
+    const v = document.createElement('video');
+    v.controls = true; v.playsInline = true; v.muted = true;
+    box.appendChild(v);
+    if (type === 'hls' && !v.canPlayType('application/vnd.apple.mpegurl')) {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js';
+      sc.onload = () => { const hls = new Hls(); hls.loadSource(src); hls.attachMedia(v); };
+      document.head.appendChild(sc);
+    } else {
+      v.src = src;
+    }
+  });
   const t = document.getElementById('testStream');
   if (t) {
     let a = null;

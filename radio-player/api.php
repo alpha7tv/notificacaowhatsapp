@@ -77,6 +77,24 @@ foreach ($cfg['stations'] as $st) {
     ];
 }
 
+$tvs = [];
+if (!empty($client['allow_tv']) || !array_key_exists('allow_tv', $client)) {
+    foreach ($cfg['tvs'] as $tv) {
+        if (empty($tv['active']) || empty($tv['src'])) {
+            continue;
+        }
+        $tvs[] = [
+            'id' => $tv['id'],
+            'name' => $tv['name'],
+            'type' => $tv['type'],
+            'src' => $tv['src'],
+            'logo' => $tv['logo'] ?? '',
+            'genre' => $genreNames[$tv['genre'] ?? ''] ?? '',
+            'description' => $tv['description'] ?? '',
+        ];
+    }
+}
+
 $ads = ['top' => [], 'player' => [], 'popup' => []];
 $today = date('Y-m-d');
 foreach ($cfg['ads'] as $ad) {
@@ -91,7 +109,7 @@ foreach ($cfg['ads'] as $ad) {
     }
 }
 
-$used = array_unique(array_column($stations, 'genre'));
+$used = array_unique([...array_column($stations, 'genre'), ...array_column($tvs, 'genre')]);
 $out = [
     'title' => $s['title'],
     'description' => $s['description'],
@@ -112,6 +130,7 @@ $out = [
     'popup_delay' => max(0, (int) $s['popup_delay']),
     'genres' => array_values(array_filter(array_column($cfg['genres'], 'name'), fn ($g) => in_array($g, $used, true))),
     'stations' => $stations,
+    'tvs' => $tvs,
     'ads' => $ads,
     'updated_at' => $cfg['updated_at'] ?? 0,
 ];

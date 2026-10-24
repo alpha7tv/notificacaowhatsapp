@@ -20,6 +20,10 @@
     stations: [],
     current: null,
     tab: 'all',
+    mode: store.get('mode', 'radio'),
+    tvs: [],
+    tvCurrent: null,
+    hls: null,
     genre: '',
     query: '',
     favorites: new Set(store.get('favorites', [])),
@@ -46,16 +50,17 @@
   }
 
   // Capa gerada (iniciais + cor) quando a rádio não tem logo.
-  function placeholderCover(name) {
+  function placeholderCover(name, wide = false) {
     let h = 0;
     for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
     const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    const w = wide ? 178 : 100;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} 100">
       <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0" stop-color="hsl(${h},70%,55%)"/><stop offset="1" stop-color="hsl(${(h + 40) % 360},70%,35%)"/>
       </linearGradient></defs>
-      <rect width="100" height="100" fill="url(#g)"/>
-      <text x="50" y="50" dy=".35em" text-anchor="middle" font-family="system-ui,sans-serif" font-size="38" font-weight="700" fill="#fff">${escapeHtml(initials)}</text>
+      <rect width="${w}" height="100" fill="url(#g)"/>
+      <text x="${w / 2}" y="50" dy=".35em" text-anchor="middle" font-family="system-ui,sans-serif" font-size="38" font-weight="700" fill="#fff">${escapeHtml(initials)}</text>
     </svg>`;
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
@@ -79,18 +84,36 @@
 
   // ---------- Lista ----------
 
+  const items = () => (state.mode === 'tv' ? state.tvs : state.stations);
+
   function filtered() {
     const q = state.query.trim().toLowerCase();
-    let list = state.stations;
+    const all = items();
+    let list = all;
     if (state.tab === 'fav') list = list.filter((s) => state.favorites.has(s.id));
-    if (state.tab === 'recent') list = state.recent.map((id) => state.stations.find((s) => s.id === id)).filter(Boolean);
+    if (state.tab === 'recent') list = state.recent.map((id) => all.find((s) => s.id === id)).filter(Boolean);
     if (state.genre) list = list.filter((s) => s.genre === state.genre);
-    if (q) list = list.filter((s) => [s.name, s.genre, s.city, s.slogan].join(' ').toLowerCase().includes(q));
+    if (q) list = list.filter((s) => [s.name, s.genre, s.city, s.slogan, s.description].join(' ').toLowerCase().includes(q));
     return list;
   }
 
+  // Rádios | TV ao vivo: o seletor só aparece quando o app tem os dois.
+  function renderModes() {
+    const hasRadio = state.stations.length > 0;
+    const hasTv = state.tvs.length > 0;
+    if (!hasTv) state.mode = 'radio';
+    else if (!hasRadio) state.mode = 'tv';
+    $('#modes').hidden = !(hasRadio && hasTv);
+    document.querySelectorAll('.mode').forEach((b) => {
+      const on = b.dataset.mode === state.mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    });
+    $('#search').placeholder = state.mode === 'tv' ? 'Buscar canal ou estilo' : 'Buscar rádio, cidade ou gênero';
+  }
+
   function renderGenres() {
-    const used = new Set(state.stations.map((s) => s.genre).filter(Boolean));
+    const used = new Set(items().map((s) => s.genre).filter(Boolean));
     const genres = state.genreOrder.filter((g) => used.has(g));
     if (state.genre && !genres.includes(state.genre)) state.genre = '';
     const box = $('#genres');
@@ -103,11 +126,19 @@
   function renderList() {
     const list = filtered();
     const box = $('#list');
+    const tv = state.mode === 'tv';
+    box.classList.toggle('tv-grid', tv);
     if (!list.length) {
-      const msg = state.tab === 'fav' ? 'Você ainda não favoritou nenhuma rádio. Toque no ♥ no player.'
-        : state.tab === 'recent' ? 'Nenhuma rádio ouvida ainda.'
-        : state.stations.length ? 'Nenhuma rádio encontrada.' : 'Nenhuma rádio no ar no momento. Volte mais tarde!';
+      const what = tv ? 'canal' : 'rádio';
+      const msg = state.tab === 'fav' ? `Você ainda não favoritou nenhum ${tv ? 'canal' : 'rádio'}. Toque no ♥ no player.`
+        : state.tab === 'recent' ? (tv ? 'Nenhum canal assistido ainda.' : 'Nenhuma rádio ouvida ainda.')
+        : items().length ? `Nenhum ${what} encontrado.` : `Nenhum ${what} no ar no momento. Volte mais tarde!`;
       box.innerHTML = `<p class="empty">${msg}</p>`;
+      return;
+    }
+    if (tv) {
+      box.innerHTML = list.map(tvCardHtml).join('');
+      box.querySelectorAll('img[data-tvcover]').forEach((img) => setTvCover(img, state.tvs.find((t) => t.id === img.dataset.tvcover)));
       return;
     }
     box.innerHTML = list.map((s) => {
@@ -125,6 +156,28 @@
     box.querySelectorAll('img[data-cover]').forEach((img) => {
       setCover(img, state.stations.find((s) => s.id === img.dataset.cover));
     });
+  }
+
+  function tvCardHtml(t) {
+    const cur = state.tvCurrent && state.tvCurrent.id === t.id;
+    const sub = [t.genre, t.description].filter(Boolean).join(' · ');
+    return `<button class="tv-card${cur ? ' current' : ''}" data-tv="${escapeHtml(t.id)}">
+      <span class="tv-thumb">
+        <img alt="" loading="lazy" data-tvcover="${escapeHtml(t.id)}">
+        <span class="live-badge">Ao vivo</span>
+        <span class="tv-play" aria-hidden="true"><svg><use href="#i-play"/></svg></span>
+      </span>
+      <span class="info"><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(sub)}</small></span>
+      ${state.favorites.has(t.id) ? '<svg class="fav" aria-label="Favorito"><use href="#i-heart"/></svg>' : ''}
+    </button>`;
+  }
+
+  function setTvCover(img, t) {
+    if (!t) return;
+    const fallback = placeholderCover(t.name, true);
+    img.onerror = () => { img.onerror = null; img.src = fallback; };
+    img.src = t.logo || fallback;
+    img.classList.toggle('logo', !!t.logo);
   }
 
   // ---------- Player ----------
@@ -214,6 +267,7 @@
   function play() {
     const st = state.current;
     if (!st) return;
+    if (state.tvCurrent) closeTv();
     clearTimeout(state.retryTimer);
     setStatus('loading');
     // Rádio ao vivo: sempre recarrega o stream para não tocar áudio "atrasado" do buffer.
@@ -370,7 +424,7 @@
     if (!fromHistory && history.state?.player) history.back();
   }
   // Botão "voltar" do Android fecha o player em vez de sair do app.
-  window.addEventListener('popstate', () => closePlayer(true));
+  window.addEventListener('popstate', () => { closePlayer(true); closeTv(true); });
 
   // Arrastar para baixo fecha o player.
   (() => {
@@ -383,9 +437,165 @@
     });
   })();
 
+  // ---------- Web TV ----------
+
+  const HLS_SRC = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js';
+  let hlsLoading = null;
+  function loadHls() {
+    if (window.Hls) return Promise.resolve(window.Hls);
+    hlsLoading ??= new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = HLS_SRC;
+      sc.onload = () => resolve(window.Hls);
+      sc.onerror = reject;
+      document.head.appendChild(sc);
+    });
+    return hlsLoading;
+  }
+
+  function destroyTv() {
+    if (state.hls) { try { state.hls.destroy(); } catch { /* já destruído */ } state.hls = null; }
+    const v = $('#tvFrame video');
+    if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+    $('#tvFrame').innerHTML = '';
+  }
+
+  function tvError() {
+    const t = state.tvCurrent;
+    destroyTv();
+    $('#tvFrame').innerHTML = `<div class="tv-msg"><p>Não foi possível carregar este canal agora.</p><button class="btn-primary" type="button" id="tvRetry">Tentar de novo</button></div>`;
+    $('#tvRetry').addEventListener('click', () => mountTv(t));
+  }
+
+  function mountTv(t) {
+    destroyTv();
+    const frame = $('#tvFrame');
+    if (t.type === 'youtube' || t.type === 'embed') {
+      // Sem allow-top-navigation: o player do canal não consegue tirar o ouvinte do app.
+      frame.innerHTML = `<iframe src="${escapeHtml(t.src)}" title="${escapeHtml(t.name)}"
+        allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen
+        referrerpolicy="strict-origin-when-cross-origin"
+        sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-forms"></iframe>`;
+      return;
+    }
+    frame.innerHTML = '<video controls playsinline autoplay preload="auto"></video>';
+    const v = frame.querySelector('video');
+    v.volume = audio.volume;
+    v.addEventListener('error', () => { if (!state.hls) tvError(); });
+    const start = () => v.play().catch(() => { /* o navegador pode exigir um toque no play */ });
+    if (t.type === 'hls' && !v.canPlayType('application/vnd.apple.mpegurl')) {
+      loadHls().then((Hls) => {
+        if (state.tvCurrent !== t) return;
+        if (!Hls || !Hls.isSupported()) { v.src = t.src; start(); return; }
+        const hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+        let fails = 0;
+        hls.on(Hls.Events.ERROR, (_, d) => {
+          if (!d.fatal) return;
+          if (++fails > 3) { tvError(); return; }
+          if (d.type === Hls.ErrorTypes.NETWORK_ERROR) setTimeout(() => hls.startLoad(), 1500 * fails);
+          else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else tvError();
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, start);
+        hls.loadSource(t.src);
+        hls.attachMedia(v);
+        state.hls = hls;
+      }).catch(tvError);
+    } else {
+      v.src = t.src;
+      start();
+    }
+  }
+
+  function updateTvFav() {
+    const t = state.tvCurrent;
+    if (!t) return;
+    const fav = state.favorites.has(t.id);
+    $('#tvFav').setAttribute('aria-pressed', String(fav));
+    $('#tvFav').setAttribute('aria-label', fav ? 'Remover dos favoritos' : 'Favoritar canal');
+  }
+
+  function openTv(t) {
+    if (!t) return;
+    if (state.playing || audio.getAttribute('src')) stop();
+    closePlayer();
+    state.tvCurrent = t;
+    state.recent = [t.id, ...state.recent.filter((id) => id !== t.id)].slice(0, 30);
+    store.set('recent', state.recent);
+    $('#tvName').textContent = t.name;
+    $('#tvDesc').textContent = [t.genre, t.description].filter(Boolean).join(' · ');
+    $('#tvDesc').hidden = !$('#tvDesc').textContent;
+    updateTvFav();
+    const others = state.tvs.filter((x) => x.id !== t.id);
+    $('#tvMoreWrap').hidden = !others.length;
+    $('#tvMore').innerHTML = others.map(tvCardHtml).join('');
+    $('#tvMore').querySelectorAll('img[data-tvcover]').forEach((img) => setTvCover(img, state.tvs.find((x) => x.id === img.dataset.tvcover)));
+    const scr = $('#tvScreen');
+    scr.classList.add('open');
+    scr.setAttribute('aria-hidden', 'false');
+    scr.scrollTop = 0;
+    if (history.state?.tv !== true) history.pushState({ tv: true }, '');
+    document.title = `${t.name} · ${state.title}`;
+    mountTv(t);
+    const slot = slots.adTv;
+    if (slot && slot.ads.length) {
+      const ad = slot.ads[slot.idx];
+      if (!viewed.has(ad.id)) { viewed.add(ad.id); track(ad.id, 'view'); }
+    }
+    if (state.mode === 'tv') renderList();
+  }
+
+  function closeTv(fromHistory = false) {
+    const scr = $('#tvScreen');
+    if (!scr.classList.contains('open')) return;
+    destroyTv();
+    state.tvCurrent = null;
+    scr.classList.remove('open');
+    scr.setAttribute('aria-hidden', 'true');
+    document.title = state.title;
+    if (!fromHistory && history.state?.tv) history.back();
+    if (state.mode === 'tv') renderList();
+  }
+
+  $('#closeTv').addEventListener('click', () => closeTv());
+  $('#tvMore').addEventListener('click', (e) => {
+    const card = e.target.closest('.tv-card');
+    if (card) openTv(state.tvs.find((t) => t.id === card.dataset.tv));
+  });
+  $('#tvFav').addEventListener('click', () => {
+    const t = state.tvCurrent;
+    if (!t) return;
+    if (state.favorites.has(t.id)) { state.favorites.delete(t.id); toast('Removido dos favoritos'); }
+    else { state.favorites.add(t.id); toast('Adicionado aos favoritos'); }
+    store.set('favorites', [...state.favorites]);
+    updateTvFav();
+  });
+  $('#shareTv').addEventListener('click', async () => {
+    const t = state.tvCurrent;
+    if (!t) return;
+    const url = new URL(location.href);
+    url.search = '?tv=' + encodeURIComponent(t.id);
+    url.hash = '';
+    try {
+      if (navigator.share) await navigator.share({ title: t.name, text: `Assista ${t.name} ao vivo`, url: url.href });
+      else { await navigator.clipboard.writeText(url.href); toast('Link copiado!'); }
+    } catch { /* cancelado */ }
+  });
+
+  document.querySelectorAll('.mode').forEach((b) => b.addEventListener('click', () => {
+    state.mode = b.dataset.mode;
+    store.set('mode', state.mode);
+    state.genre = '';
+    renderModes();
+    renderGenres();
+    renderList();
+  }));
+
   // ---------- Eventos de interface ----------
 
   $('#list').addEventListener('click', (e) => {
+    const card = e.target.closest('.tv-card');
+    if (card) { openTv(state.tvs.find((t) => t.id === card.dataset.tv)); return; }
     const btn = e.target.closest('.station');
     if (!btn) return;
     const st = state.stations.find((s) => s.id === btn.dataset.id);
@@ -465,11 +675,11 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, dialog')) return;
+    if (e.target.closest('input, dialog') || state.tvCurrent) { if (e.key === 'Escape' && state.tvCurrent) closeTv(); return; }
     if (e.code === 'Space') { e.preventDefault(); toggle(); }
     else if (e.key === 'ArrowRight') step(1);
     else if (e.key === 'ArrowLeft') step(-1);
-    else if (e.key === 'Escape') closePlayer();
+    else if (e.key === 'Escape') { closePlayer(); closeTv(); }
   });
 
   // Ao voltar a conexão, retoma se estava tentando tocar.
@@ -692,6 +902,8 @@
     const prevId = state.current && state.current.id;
     state.genreOrder = cfg.genres || [];
     state.stations = (cfg.stations || []).map((s, i) => ({ ...s, id: String(s.id || i) }));
+    state.tvs = (cfg.tvs || []).map((t, i) => ({ ...t, id: String(t.id || 'tv' + i) }));
+    renderModes();
     if (prevId) {
       const updated = state.stations.find((s) => s.id === prevId);
       if (updated) { state.current = updated; updateInfo(); }
@@ -701,6 +913,7 @@
     renderAbout(cfg);
     renderSlot($('#adTop'), cfg.ads && cfg.ads.top);
     renderSlot($('#adPlayer'), cfg.ads && cfg.ads.player);
+    renderSlot($('#adTv'), cfg.ads && cfg.ads.player);
   }
 
   async function loadConfig() {
@@ -742,6 +955,13 @@
     applyConfig(cfg);
 
     // Link compartilhado (?r=id) ou última rádio ouvida — sem tocar sozinho (bloqueado pelos navegadores).
+    const wantTv = new URLSearchParams(location.search).get('tv');
+    const tvLink = wantTv && state.tvs.find((t) => t.id === wantTv);
+    if (tvLink) {
+      state.mode = 'tv';
+      renderModes(); renderGenres(); renderList();
+      openTv(tvLink);
+    }
     const wanted = new URLSearchParams(location.search).get('r') || store.get('last', null);
     const st = state.stations.find((s) => s.id === wanted);
     if (st) selectStation(st, false);

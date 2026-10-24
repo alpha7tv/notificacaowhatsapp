@@ -81,6 +81,7 @@ function rp_defaults(): array
         ],
         'genres' => $genres,
         'stations' => [],
+        'tvs' => [],
         'ads' => [],
         'updated_at' => time(),
     ];
@@ -338,7 +339,7 @@ function rp_config(): array
     }
     $def = rp_defaults();
     $cfg['settings'] = array_merge($def['settings'], $cfg['settings'] ?? []);
-    foreach (['genres', 'stations', 'ads'] as $k) {
+    foreach (['genres', 'stations', 'tvs', 'ads'] as $k) {
         $cfg[$k] = array_values($cfg[$k] ?? []);
     }
     return $cfg;
@@ -410,6 +411,82 @@ function rp_ad_is_live(array $ad, ?string $today = null): bool
         return false;
     }
     return !empty($ad['image']) || trim((string) ($ad['title'] ?? '')) !== '';
+}
+
+// ---------- Web TV ----------
+
+const TV_TYPES = [
+    'auto' => 'Detectar automaticamente',
+    'hls' => 'Transmissão HLS (.m3u8)',
+    'video' => 'Arquivo de vídeo (MP4/WebM)',
+    'youtube' => 'YouTube',
+    'embed' => 'Player incorporado (iframe)',
+];
+
+/**
+ * Interpreta o link (ou código <iframe>) de um canal de TV.
+ * Retorna [tipo, endereço que o app usa] ou lança erro explicando o que corrigir.
+ */
+function rp_parse_tv(string $input, string $type = 'auto'): array
+{
+    $input = trim($input);
+    if (stripos($input, '<iframe') !== false) {
+        if (!preg_match('~\ssrc\s*=\s*["\']([^"\']+)["\']~i', $input, $m)) {
+            throw new RuntimeException('Não encontrei o endereço (src) dentro do código do iframe.');
+        }
+        $input = html_entity_decode($m[1], ENT_QUOTES);
+        if ($type === 'auto') {
+            $type = 'embed';
+        }
+    }
+    if (str_starts_with($input, '//')) {
+        $input = 'https:' . $input;
+    }
+    if (!preg_match('~^https?://~i', $input) || !filter_var($input, FILTER_VALIDATE_URL)) {
+        throw new RuntimeException('Cole um link começando com https:// ou o código de incorporação (iframe).');
+    }
+    if (stripos($input, 'http://') === 0) {
+        throw new RuntimeException('O link precisa ser https:// (o navegador bloqueia vídeo http dentro de um app seguro). Peça ao seu provedor o link https.');
+    }
+    $url = $input;
+    $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+    $path = (string) parse_url($url, PHP_URL_PATH);
+    parse_str((string) parse_url($url, PHP_URL_QUERY), $q);
+
+    // YouTube: vídeo, live, shorts, embed ou "ao vivo" de um canal.
+    if (preg_match('~(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be)$~', $host) && in_array($type, ['auto', 'youtube', 'embed'], true)) {
+        $id = null;
+        if ($host === 'youtu.be') {
+            $id = trim($path, '/');
+        } elseif (!empty($q['v'])) {
+            $id = $q['v'];
+        } elseif (preg_match('~^/(live|embed|shorts)/([A-Za-z0-9_-]{6,})~', $path, $m) && $m[2] !== 'live_stream') {
+            $id = $m[2];
+        } elseif (preg_match('~^/channel/(UC[A-Za-z0-9_-]+)~', $path, $m)) {
+            return ['youtube', 'https://www.youtube.com/embed/live_stream?channel=' . $m[1] . '&autoplay=1&playsinline=1'];
+        } elseif (!empty($q['channel'])) {
+            return ['youtube', 'https://www.youtube.com/embed/live_stream?channel=' . rawurlencode($q['channel']) . '&autoplay=1&playsinline=1'];
+        }
+        if ($id && preg_match('~^[A-Za-z0-9_-]{6,20}$~', $id)) {
+            return ['youtube', 'https://www.youtube.com/embed/' . $id . '?autoplay=1&playsinline=1&rel=0'];
+        }
+        throw new RuntimeException('Link do YouTube não reconhecido. Use o link do vídeo/live (youtube.com/watch?v=… ou youtu.be/…) ou o do canal (youtube.com/channel/UC…).');
+    }
+    // Vimeo
+    if (preg_match('~(^|\.)vimeo\.com$~', $host) && $host !== 'player.vimeo.com' && preg_match('~/(\d+)~', $path, $m)) {
+        return ['embed', 'https://player.vimeo.com/video/' . $m[1] . '?autoplay=1'];
+    }
+    if ($type === 'auto') {
+        $type = match (true) {
+            (bool) preg_match('~\.m3u8$~i', $path) => 'hls',
+            (bool) preg_match('~\.(mp4|webm|ogv|mov)$~i', $path) => 'video',
+            default => 'embed',
+        };
+    }
+    if (!isset(TV_TYPES[$type]) || $type === 'auto') {
+        $type = 'embed';
+    }
+    return [$type, mb_substr($url, 0, 1000)];
 }
 
 // ---------- Validação ----------

@@ -420,6 +420,75 @@ body.is-live .art-ring { animation-play-state: running; }
   .ad-player { display: none; }
 }
 
+/* Seletor Rádios | TV ao vivo */
+.modes { display: flex; gap: 8px; margin: 0 0 12px; }
+.mode {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 46px;
+  border-radius: 14px; border: var(--card-border); background: var(--surface); color: var(--muted); font-weight: 800;
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.mode svg { width: 22px; height: 22px; }
+.mode.active { background: var(--accent); color: var(--accent-text); border-color: transparent; box-shadow: var(--glow); }
+
+/* Canais de TV */
+.list.tv-grid { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 560px) { .list.tv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .list.tv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tv-card {
+  position: relative; display: flex; flex-direction: column; gap: 10px; width: 100%; text-align: left;
+  background: var(--surface); border: var(--card-border); border-radius: var(--tile-radius); padding: 10px 10px 12px;
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); transition: transform .15s ease;
+}
+.tv-card:hover { transform: translateY(-2px); }
+.tv-card.current { border-color: var(--accent); border-style: solid; }
+.tv-thumb { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: calc(var(--tile-radius) - 6px); overflow: hidden; background: #000; }
+.tv-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tv-thumb img.logo { object-fit: contain; background: var(--surface-2); }
+.live-badge {
+  position: absolute; left: 8px; top: 8px; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: #fff; background: #e11d48; padding: 3px 8px; border-radius: 6px;
+}
+.live-badge::before { content: "● "; }
+.tv-play {
+  position: absolute; right: 10px; bottom: 10px; width: 44px; height: 44px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--accent); color: var(--accent-text); box-shadow: var(--glow);
+}
+.tv-card .info { min-width: 0; padding: 0 2px; }
+.tv-card strong, .tv-card small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-card small { color: var(--muted); font-size: .82rem; }
+.tv-card .fav { position: absolute; top: 16px; right: 16px; width: 26px; height: 26px; padding: 5px; color: #fff; background: rgba(0, 0, 0, .45); border-radius: 50%; }
+
+/* Tela da TV */
+.tvscreen {
+  position: fixed; inset: 0; z-index: 22; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg-art), var(--bg); background-attachment: fixed;
+  transform: translateY(100%); transition: transform .34s cubic-bezier(.2, .8, .2, 1); visibility: hidden;
+}
+.tvscreen.open { transform: none; visibility: visible; }
+.tv-inner { max-width: 980px; margin: 0 auto; display: grid; gap: 14px; padding: calc(12px + var(--safe-t)) 16px calc(24px + var(--safe-b)); }
+:root[data-skin="forro"] .tv-inner { padding-top: calc(36px + var(--safe-t)); }
+.tv-frame {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius); overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.tv-frame video, .tv-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+.tv-msg { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px; color: #fff; text-align: center; padding: 16px; }
+.tv-msg p { margin: 0; }
+.tv-msg .btn-primary { width: auto; padding: 0 20px; }
+.tv-info { display: flex; align-items: center; gap: 12px; }
+.tv-text { flex: 1; min-width: 0; }
+.tv-info h2 { margin: 0; font-size: 1.35rem; font-family: var(--font-display); text-transform: var(--display-transform); letter-spacing: var(--display-spacing); }
+.tv-info p { margin: 4px 0 0; color: var(--muted); }
+.tv-more-wrap h3 { margin: 8px 0 10px; font-size: 1rem; }
+.tv-more { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 700px) { .tv-more { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tv-more .tv-play { width: 34px; height: 34px; }
+.tv-more .tv-play svg { width: 18px; height: 18px; }
+/* Celular deitado: o vídeo ocupa a tela. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .tv-frame { height: calc(100vh - 80px); aspect-ratio: auto; }
+}
+
 /* Publicidade */
 .ad-slot { position: relative; margin: 4px 0 14px; }
 .ad-slot a, .ad-slot .ad-box {
