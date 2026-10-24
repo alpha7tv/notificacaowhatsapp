@@ -145,7 +145,7 @@ server {
     }
 
     location ~ \.php\$ {
-        try_files \$uri =404;
+        # O snippet do Debian/Ubuntu já inclui "try_files \$fastcgi_script_name =404".
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:${FPM_SOCK};
     }
@@ -153,7 +153,10 @@ server {
 NGINX
 
 ln -sf "/etc/nginx/sites-available/${SITE}" "/etc/nginx/sites-enabled/${SITE}"
-nginx -t
+if ! nginx -t; then
+  rm -f "/etc/nginx/sites-enabled/${SITE}"
+  die "Configuração do Nginx inválida; o site foi desativado para não afetar o servidor. Envie esta saída para o suporte."
+fi
 systemctl enable --now "$FPM_SERVICE" nginx >/dev/null 2>&1 || true
 systemctl restart "$FPM_SERVICE"
 systemctl reload nginx
