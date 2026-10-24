@@ -705,10 +705,24 @@
 
   async function loadConfig() {
     const res = await fetch('api.php', { cache: 'no-cache' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const cfg = await res.json();
+    const cfg = await res.json().catch(() => null);
+    if (!cfg || (!res.ok && !cfg.error)) throw new Error('HTTP ' + res.status);
     state.loadedAt = Date.now();
     return cfg;
+  }
+
+  function showUnavailable(cfg) {
+    applySkin('classico');
+    $('#appTitle').textContent = cfg.title || 'Rádio Player';
+    document.title = cfg.title || 'Rádio Player';
+    $('#installBtn').hidden = true;
+    $('#mini').hidden = true;
+    document.querySelectorAll('.search, .tabs, .genres, .ad-slot, #about').forEach((el) => { el.hidden = true; });
+    $('#list').innerHTML = `<div class="unavailable">
+      <svg aria-hidden="true"><use href="#i-radio"/></svg>
+      <h2>${escapeHtml(cfg.message || 'Aplicativo indisponível.')}</h2>
+      ${cfg.support ? `<a class="btn-primary" href="${escapeHtml(cfg.support)}" target="_blank" rel="noopener">Falar com o suporte</a>` : ''}
+    </div>`;
   }
 
   async function init() {
@@ -720,6 +734,11 @@
       setTimeout(init, 10000);
       return;
     }
+    // Endereço principal do site: vai para o app padrão da plataforma.
+    if (cfg.redirect) { location.replace(cfg.redirect); return; }
+    // App não encontrado, suspenso ou vencido.
+    if (cfg.error) { showUnavailable(cfg); return; }
+
     applyConfig(cfg);
 
     // Link compartilhado (?r=id) ou última rádio ouvida — sem tocar sozinho (bloqueado pelos navegadores).

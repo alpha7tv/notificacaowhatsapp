@@ -4,6 +4,9 @@ declare(strict_types=1);
 /*
  * Núcleo do Rádio Player: armazenamento em arquivos (sem banco de dados),
  * uploads de imagens e helpers usados pela API e pelo painel.
+ *
+ * Plataforma com vários clientes: cada cliente tem um "endereço" (slug), um app
+ * em /r/<slug>/ e os próprios dados em data/tenants/<slug>/ e uploads/<slug>/.
  */
 
 date_default_timezone_set('America/Sao_Paulo');
@@ -11,8 +14,9 @@ date_default_timezone_set('America/Sao_Paulo');
 const RP_ROOT = __DIR__ . '/..';
 const RP_DATA = RP_ROOT . '/data';
 const RP_UPLOADS = RP_ROOT . '/uploads';
-const RP_CONFIG = RP_DATA . '/config.json';
-const RP_STATS = RP_DATA . '/stats.json';
+const RP_TENANTS = RP_DATA . '/tenants';
+const RP_CLIENTS = RP_DATA . '/clients.php';
+const RP_PLATFORM = RP_DATA . '/platform.json';
 const RP_ADMIN = RP_DATA . '/admin.php';
 const RP_LOGIN = RP_DATA . '/login-attempts.php';
 const RP_MAX_UPLOAD = 4 * 1024 * 1024;
@@ -87,11 +91,168 @@ function rp_id(): string
     return bin2hex(random_bytes(5));
 }
 
+// ---------- Clientes (tenants) ----------
+
+const RP_RESERVED_SLUGS = ['admin', 'api', 'r', 'data', 'lib', 'uploads', 'samples', 'icons', 'css', 'js', 'deploy', 'www', 'app'];
+
+function rp_valid_slug(string $slug): bool
+{
+    return (bool) preg_match('/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/', $slug) && !in_array($slug, RP_RESERVED_SLUGS, true);
+}
+
+/** Sugere um endereço a partir do nome ("Rádio Nova FM" → "radio-nova-fm"). */
+function rp_slugify(string $name): string
+{
+    $s = strtolower((string) iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name));
+    $s = trim((string) preg_replace('/[^a-z0-9]+/', '-', $s), '-');
+    return substr($s, 0, 40);
+}
+
+/** Define o cliente em uso; a partir daqui config, uploads e estatísticas são dele. */
+function rp_use_tenant(?string $slug): void
+{
+    if ($slug !== null && !rp_valid_slug($slug)) {
+        throw new InvalidArgumentException('Endereço de cliente inválido.');
+    }
+    $GLOBALS['rp_tenant'] = $slug;
+}
+
+function rp_tenant(): string
+{
+    $t = $GLOBALS['rp_tenant'] ?? null;
+    if (!$t) {
+        throw new LogicException('Nenhum cliente selecionado.');
+    }
+    return $t;
+}
+
+function rp_tenant_dir(): string
+{
+    return RP_TENANTS . '/' . rp_tenant();
+}
+
+function rp_upload_dir(): string
+{
+    return RP_UPLOADS . '/' . rp_tenant();
+}
+
+function rp_clients(): array
+{
+    return rp_read_php(RP_CLIENTS);
+}
+
+function rp_save_clients(array $clients): void
+{
+    ksort($clients);
+    rp_write_php(RP_CLIENTS, $clients);
+}
+
+/** 'active', 'suspended' (suspenso no painel master) ou 'expired' (vencimento passou). */
+function rp_client_state(array $c): string
+{
+    if (($c['status'] ?? 'active') === 'suspended') {
+        return 'suspended';
+    }
+    if (!empty($c['expires']) && $c['expires'] < date('Y-m-d')) {
+        return 'expired';
+    }
+    return 'active';
+}
+
+function rp_platform(): array
+{
+    return array_merge([
+        'brand' => 'Rádio Player',
+        'support_whatsapp' => '',
+        'default_tenant' => '',
+    ], rp_read_json(RP_PLATFORM, []) ?? []);
+}
+
+function rp_save_platform(array $p): void
+{
+    rp_write_atomic(RP_PLATFORM, json_encode($p, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+/** Apaga uma pasta inteira (só dentro de data/tenants e uploads). */
+function rp_rmtree(string $dir): void
+{
+    $real = realpath($dir);
+    $allowed = [realpath(RP_TENANTS), realpath(RP_UPLOADS)];
+    if (!$real || !is_dir($real) || !in_array(dirname($real), $allowed, true)) {
+        return;
+    }
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($real, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($it as $f) {
+        $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname());
+    }
+    @rmdir($real);
+}
+
+/**
+ * Atualização da versão de um cliente só para a plataforma: o app que já existia
+ * vira o cliente "principal" e continua abrindo no endereço principal do site.
+ */
+function rp_migrate_single(): void
+{
+    if (!is_file(RP_DATA . '/config.json')) {
+        return;
+    }
+    try {
+        rp_locked(function () {
+            if (!is_file(RP_DATA . '/config.json')) {
+                return;
+            }
+            $slug = 'principal';
+            $tdir = RP_TENANTS . '/' . $slug;
+            if (is_file($tdir . '/config.json')) {
+                // Já migrado antes: guarda o arquivo antigo sem sobrescrever nada.
+                rename(RP_DATA . '/config.json', RP_DATA . '/config.json.migrado');
+                return;
+            }
+            $udir = RP_UPLOADS . '/' . $slug;
+            @mkdir($tdir, 0775, true);
+            @mkdir($udir, 0775, true);
+            foreach (glob(RP_UPLOADS . '/*') ?: [] as $f) {
+                if (is_file($f)) {
+                    rename($f, $udir . '/' . basename($f));
+                }
+            }
+            $json = (string) file_get_contents(RP_DATA . '/config.json');
+            $json = str_replace('"uploads/', '"uploads/' . $slug . '/', $json);
+            $cfg = json_decode($json, true) ?: [];
+            rp_write_atomic($tdir . '/config.json', $json);
+            @unlink(RP_DATA . '/config.json');
+            if (is_file(RP_DATA . '/stats.json')) {
+                rename(RP_DATA . '/stats.json', $tdir . '/stats.json');
+            }
+            $clients = rp_read_php(RP_CLIENTS);
+            $clients[$slug] = [
+                'name' => $cfg['settings']['title'] ?? 'Cliente principal',
+                'user' => '', 'hash' => '', 'uid' => rp_id(),
+                'status' => 'active', 'expires' => '', 'max_stations' => 0,
+                'phone' => '', 'notes' => 'Criado automaticamente a partir da instalação anterior.',
+                'created_at' => date('Y-m-d'),
+            ];
+            rp_save_clients($clients);
+            $p = rp_platform();
+            $p['default_tenant'] = $slug;
+            rp_save_platform($p);
+        });
+    } catch (Throwable) {
+        // Sem permissão de escrita: tenta de novo na próxima requisição.
+    }
+}
+
 // ---------- Armazenamento ----------
 
 function rp_ensure_dirs(): void
 {
-    foreach ([RP_DATA, RP_UPLOADS] as $dir) {
+    $dirs = [RP_DATA, RP_UPLOADS, RP_TENANTS];
+    if (!empty($GLOBALS['rp_tenant'])) {
+        $dirs[] = rp_tenant_dir();
+        $dirs[] = rp_upload_dir();
+    }
+    foreach ($dirs as $dir) {
         if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
             throw new RuntimeException("Não foi possível criar a pasta {$dir}. Verifique as permissões.");
         }
@@ -120,32 +281,57 @@ function rp_write_atomic(string $file, string $content): void
     @chmod($file, 0664);
 }
 
-/** Executa $fn com um lock exclusivo (evita que dois salvamentos simultâneos se percam). */
+/**
+ * Executa $fn com um lock exclusivo (evita que dois salvamentos simultâneos se percam).
+ * Reentrante: chamadas aninhadas na mesma requisição reaproveitam o lock já obtido.
+ */
 function rp_locked(callable $fn)
 {
+    static $depth = 0;
+    if ($depth > 0) {
+        $depth++;
+        try {
+            return $fn();
+        } finally {
+            $depth--;
+        }
+    }
     rp_ensure_dirs();
     $lock = fopen(RP_DATA . '/.lock', 'c');
     flock($lock, LOCK_EX);
+    $depth = 1;
     try {
         return $fn();
     } finally {
+        $depth = 0;
         flock($lock, LOCK_UN);
         fclose($lock);
     }
 }
 
+function rp_config_file(): string
+{
+    return rp_tenant_dir() . '/config.json';
+}
+
+function rp_stats_file(): string
+{
+    return rp_tenant_dir() . '/stats.json';
+}
+
 function rp_config(): array
 {
-    $cfg = rp_read_json(RP_CONFIG);
+    $file = rp_config_file();
+    $cfg = rp_read_json($file);
     if ($cfg === null) {
         $cfg = rp_defaults();
         try {
-            rp_locked(function () use ($cfg) {
-                if (!is_file(RP_CONFIG)) {
-                    rp_write_atomic(RP_CONFIG, json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            rp_locked(function () use ($cfg, $file) {
+                if (!is_file($file)) {
+                    rp_write_atomic($file, json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 }
             });
-            $cfg = rp_read_json(RP_CONFIG, $cfg);
+            $cfg = rp_read_json($file, $cfg);
         } catch (RuntimeException) {
             // Sem permissão de escrita: segue com os padrões em memória.
         }
@@ -165,7 +351,7 @@ function rp_update_config(callable $mutate): array
         $cfg = rp_config();
         $cfg = $mutate($cfg) ?? $cfg;
         $cfg['updated_at'] = time();
-        rp_write_atomic(RP_CONFIG, json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        rp_write_atomic(rp_config_file(), json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         return $cfg;
     });
 }
@@ -199,13 +385,13 @@ function rp_track(string $adId, string $type): void
         return;
     }
     rp_locked(function () use ($adId, $type) {
-        $cfg = rp_read_json(RP_CONFIG, ['ads' => []]);
+        $cfg = rp_read_json(rp_config_file(), ['ads' => []]);
         if (!in_array($adId, array_column($cfg['ads'] ?? [], 'id'), true)) {
             return;
         }
-        $stats = rp_read_json(RP_STATS, []);
+        $stats = rp_read_json(rp_stats_file(), []);
         $stats[$adId][$type . 's'] = ($stats[$adId][$type . 's'] ?? 0) + 1;
-        rp_write_atomic(RP_STATS, json_encode($stats));
+        rp_write_atomic(rp_stats_file(), json_encode($stats));
     });
 }
 
@@ -301,7 +487,7 @@ function rp_social_link(string $s, string $base): string
 /**
  * Valida e salva uma imagem enviada. As imagens (exceto GIF animado) são
  * recodificadas com GD, o que descarta qualquer conteúdo escondido no arquivo.
- * Retorna o caminho relativo ("uploads/xxxx.jpg") ou '' se nada foi enviado.
+ * Retorna o caminho relativo ("uploads/<cliente>/xxxx.jpg") ou '' se nada foi enviado.
  */
 function rp_save_upload(string $field, int $maxSide = 1600): string
 {
@@ -326,11 +512,11 @@ function rp_save_upload(string $field, int $maxSide = 1600): string
 
     if ($mime === 'image/gif' || !extension_loaded('gd')) {
         $dest = $name . '.' . $types[$mime];
-        if (!move_uploaded_file($f['tmp_name'], RP_UPLOADS . '/' . $dest)) {
+        if (!move_uploaded_file($f['tmp_name'], rp_upload_dir() . '/' . $dest)) {
             throw new RuntimeException('Não foi possível salvar a imagem. Verifique as permissões da pasta uploads/.');
         }
-        @chmod(RP_UPLOADS . '/' . $dest, 0664);
-        return 'uploads/' . $dest;
+        @chmod(rp_upload_dir() . '/' . $dest, 0664);
+        return 'uploads/' . rp_tenant() . '/' . $dest;
     }
 
     $src = @imagecreatefromstring((string) file_get_contents($f['tmp_name']));
@@ -350,20 +536,20 @@ function rp_save_upload(string $field, int $maxSide = 1600): string
     }
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
     $dest = $name . ($keepAlpha ? '.png' : '.jpg');
-    $ok = $keepAlpha ? imagepng($dst, RP_UPLOADS . '/' . $dest, 8) : imagejpeg($dst, RP_UPLOADS . '/' . $dest, 86);
+    $ok = $keepAlpha ? imagepng($dst, rp_upload_dir() . '/' . $dest, 8) : imagejpeg($dst, rp_upload_dir() . '/' . $dest, 86);
     imagedestroy($src);
     imagedestroy($dst);
     if (!$ok) {
         throw new RuntimeException('Não foi possível salvar a imagem. Verifique as permissões da pasta uploads/.');
     }
-    @chmod(RP_UPLOADS . '/' . $dest, 0664);
-    return 'uploads/' . $dest;
+    @chmod(rp_upload_dir() . '/' . $dest, 0664);
+    return 'uploads/' . rp_tenant() . '/' . $dest;
 }
 
-/** Apaga um arquivo enviado (só dentro de uploads/). */
+/** Apaga um arquivo enviado (só dentro de uploads/<cliente atual>/). */
 function rp_delete_upload(?string $path): void
 {
-    if ($path && preg_match('~^uploads/[A-Za-z0-9._-]+$~', $path) && is_file(RP_ROOT . '/' . $path)) {
+    if ($path && preg_match('~^uploads/' . preg_quote(rp_tenant(), '~') . '/[A-Za-z0-9._-]+$~', $path) && is_file(RP_ROOT . '/' . $path)) {
         @unlink(RP_ROOT . '/' . $path);
     }
 }
@@ -388,7 +574,7 @@ function rp_make_icons(string $logo, string $bg): bool
         $w = (int) round(imagesx($src) * $scale);
         $h = (int) round(imagesy($src) * $scale);
         imagecopyresampled($im, $src, (int) (($size - $w) / 2), (int) (($size - $h) / 2), 0, 0, $w, $h, imagesx($src), imagesy($src));
-        imagepng($im, RP_UPLOADS . '/app-' . $file);
+        imagepng($im, rp_upload_dir() . '/app-' . $file);
         imagedestroy($im);
     }
     imagedestroy($src);
@@ -397,10 +583,13 @@ function rp_make_icons(string $logo, string $bg): bool
 
 function rp_icon(string $file): string
 {
-    return is_file(RP_UPLOADS . '/app-' . $file) ? 'uploads/app-' . $file . '?v=' . filemtime(RP_UPLOADS . '/app-' . $file) : 'icons/' . $file;
+    $path = rp_upload_dir() . '/app-' . $file;
+    return is_file($path) ? 'uploads/' . rp_tenant() . '/app-' . $file . '?v=' . filemtime($path) : 'icons/' . $file;
 }
 
 function h(?string $s): string
 {
     return htmlspecialchars((string) $s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
+
+rp_migrate_single();

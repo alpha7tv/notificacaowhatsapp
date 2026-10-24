@@ -2,14 +2,46 @@
 declare(strict_types=1);
 
 /*
- * API pública do app.
- *   GET  api.php                    → rádios, estilos, publicidade ativa e aparência
- *   POST api.php?action=track       → registra visualização/clique de publicidade (id, type)
+ * API pública do app. O cliente vem em ?t=<endereço> (o Nginx preenche a partir de /r/<endereço>/).
+ *   GET  api.php?t=x                 → rádios, estilos, publicidade ativa e aparência
+ *   POST api.php?t=x&action=track    → registra visualização/clique de publicidade (id, type)
+ *   GET  api.php                     → endereço principal: indica o app padrão, se houver
  */
 
 require __DIR__ . '/lib/bootstrap.php';
 
 header('X-Content-Type-Options: nosniff');
+
+function api_out(array $data, int $code = 200): never
+{
+    http_response_code($code);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-cache');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+$platform = rp_platform();
+$support = rp_whatsapp_link($platform['support_whatsapp']);
+$slug = strtolower(trim((string) ($_GET['t'] ?? '')));
+$clients = rp_clients();
+
+if ($slug === '') {
+    $def = $platform['default_tenant'];
+    if ($def !== '' && isset($clients[$def])) {
+        api_out(['redirect' => 'r/' . $def . '/']);
+    }
+    api_out(['error' => 'no_tenant', 'title' => $platform['brand'], 'message' => 'Nenhum aplicativo neste endereço.', 'support' => $support], 404);
+}
+
+$client = rp_valid_slug($slug) ? ($clients[$slug] ?? null) : null;
+if (!$client) {
+    api_out(['error' => 'not_found', 'title' => $platform['brand'], 'message' => 'Aplicativo não encontrado. Confira o link.', 'support' => $support], 404);
+}
+if (rp_client_state($client) !== 'active') {
+    api_out(['error' => 'suspended', 'title' => $client['name'], 'message' => 'Este aplicativo está temporariamente indisponível.', 'support' => $support], 403);
+}
+rp_use_tenant($slug);
 
 if (($_GET['action'] ?? '') === 'track') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -84,6 +116,4 @@ $out = [
     'updated_at' => $cfg['updated_at'] ?? 0,
 ];
 
-header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: no-cache');
-echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+api_out($out);

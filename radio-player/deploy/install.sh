@@ -78,7 +78,7 @@ SRC="$(find "$TMP" -mindepth 2 -maxdepth 2 -type d -name radio-player | head -n1
 [[ -n "$SRC" && -f "$SRC/index.html" ]] || die "Pasta radio-player não encontrada no download."
 
 FIRST_INSTALL=1
-[[ -f "$DIR/data/config.json" ]] && FIRST_INSTALL=0
+[[ -f "$DIR/data/admin.php" ]] && FIRST_INSTALL=0
 
 mkdir -p "$DIR"
 # data/ e uploads/ guardam o que foi cadastrado no painel: nunca são sobrescritos.
@@ -145,6 +145,15 @@ server {
     location ~* \.(css|js)\$ { add_header Cache-Control "no-cache"; try_files \$uri =404; }
     location ~* \.(svg|png|jpg|jpeg|webp|gif|ico)\$ { expires 7d; try_files \$uri =404; }
 
+    # App de cada cliente: /r/<endereço>/ usa os mesmos arquivos, com o cliente indicado à API.
+    location ^~ /r/ {
+        rewrite ^/r/([a-z0-9-]+)\$ /r/\$1/ permanent;
+        rewrite ^/r/([a-z0-9-]+)/(api|manifest)\.php\$ /\$2.php?t=\$1 last;
+        rewrite ^/r/([a-z0-9-]+)/\$ /index.html last;
+        rewrite ^/r/([a-z0-9-]+)/(.+)\$ /\$2 last;
+        return 404;
+    }
+
     location / {
         add_header Cache-Control "no-cache";
         try_files \$uri \$uri/ =404;
@@ -199,12 +208,13 @@ fi
 # ---------------------------------------------------------------------------
 say "Conferindo…"
 HOST_HDR="${DOMAIN:-localhost}"
-if curl -fsS -H "Host: ${HOST_HDR}" http://127.0.0.1/api.php -o /dev/null; then
+API_CODE="$(curl -sS -H "Host: ${HOST_HDR}" -o /dev/null -w '%{http_code}' http://127.0.0.1/api.php || true)"
+if [[ "$API_CODE" == "200" || "$API_CODE" == "404" ]]; then
   echo "API respondendo."
 else
   warn "A API não respondeu localmente. Veja: journalctl -u ${FPM_SERVICE} -n 50"
 fi
-if curl -fsS -H "Host: ${HOST_HDR}" -o /dev/null -w '%{http_code}' http://127.0.0.1/data/config.json 2>/dev/null | grep -q 200; then
+if curl -fsS -H "Host: ${HOST_HDR}" -o /dev/null -w '%{http_code}' http://127.0.0.1/data/platform.json 2>/dev/null | grep -q 200; then
   warn "data/ está acessível pela web — verifique a configuração do Nginx!"
 fi
 

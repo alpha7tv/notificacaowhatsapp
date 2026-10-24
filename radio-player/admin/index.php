@@ -2,8 +2,9 @@
 declare(strict_types=1);
 
 /*
- * Painel administrativo do Rádio Player.
- * Rádios (streaming), estilos, publicidade, aparência/contatos e senha.
+ * Painel do Rádio Player.
+ *  - Master (dono da plataforma): cadastra clientes, vencimentos e limites; pode entrar no painel de qualquer cliente.
+ *  - Cliente: edita só o próprio app (rádios, estilos, publicidade, aparência e senha).
  */
 
 require __DIR__ . '/../lib/bootstrap.php';
@@ -108,11 +109,42 @@ function img_url(?string $path): string
     return preg_match('~^https?://~i', $path) ? $path : '../' . $path;
 }
 
+function base_url(): string
+{
+    $https = ($_SERVER['HTTPS'] ?? '') === 'on' || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
+    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'])), '/') . '/';
+}
+
+function app_url(string $slug): string
+{
+    return base_url() . 'r/' . $slug . '/';
+}
+
+const CLIENT_STATES = ['active' => 'Ativo', 'suspended' => 'Suspenso', 'expired' => 'Vencido'];
+
 // ---------- Estado ----------
 
 $admin = rp_read_php(RP_ADMIN);
+$clients = rp_clients();
+$platform = rp_platform();
 $setup = empty($admin['hash']);
-$logged = !$setup && !empty($_SESSION['uid']) && ($_SESSION['uid'] === ($admin['uid'] ?? null));
+$role = null;
+if (!$setup && ($_SESSION['role'] ?? '') === 'master' && hash_equals((string) ($admin['uid'] ?? ''), (string) ($_SESSION['uid'] ?? ''))) {
+    $role = 'master';
+} elseif (($_SESSION['role'] ?? '') === 'client' && isset($clients[$_SESSION['tenant'] ?? ''])
+    && hash_equals((string) $clients[$_SESSION['tenant']]['uid'], (string) ($_SESSION['uid'] ?? ''))) {
+    $role = 'client';
+}
+$logged = $role !== null;
+$master = $role === 'master';
+// Cliente vê o próprio app; o master pode "entrar" no painel de um cliente.
+$tenant = $role === 'client' ? $_SESSION['tenant'] : ($master ? ($_SESSION['as'] ?? null) : null);
+if ($tenant !== null && !isset($clients[$tenant])) {
+    unset($_SESSION['as']);
+    $tenant = null;
+}
+rp_use_tenant($tenant);
+$client = $tenant !== null ? $clients[$tenant] : null;
 $fatal = null;
 try {
     rp_ensure_dirs();
@@ -144,29 +176,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                 }
                 rp_write_php(RP_ADMIN, ['user' => $user, 'hash' => password_hash($pass, PASSWORD_DEFAULT), 'uid' => rp_id()]);
             });
-            rp_config(); // cria a configuração inicial com os estilos padrão
             session_regenerate_id(true);
+            $_SESSION['role'] = 'master';
             $_SESSION['uid'] = rp_read_php(RP_ADMIN)['uid'];
-            flash('Administrador criado. Agora cadastre suas rádios.');
-            go('tab=radios&edit=new');
+            flash('Administrador criado. Agora cadastre seu primeiro cliente.');
+            go('tab=clientes&edit=new');
         }
 
         if (!$setup && $action === 'login') {
             if ($wait = login_blocked()) {
                 throw new RuntimeException('Muitas tentativas. Aguarde ' . ceil($wait / 60) . ' min.');
             }
-            $ok = hash_equals((string) $admin['user'], rp_clean($_POST['user'] ?? '', 60))
-                & password_verify((string) ($_POST['pass'] ?? ''), (string) $admin['hash']);
-            if (!$ok) {
+            $user = mb_strtolower(rp_clean($_POST['user'] ?? '', 80));
+            $pass = (string) ($_POST['pass'] ?? '');
+            $who = null;
+            if (hash_equals(mb_strtolower((string) $admin['user']), $user) && password_verify($pass, (string) $admin['hash'])) {
+                $who = ['master', null, $admin['uid']];
+            } else {
+                foreach ($clients as $slug => $c) {
+                    if ($c['user'] !== '' && hash_equals(mb_strtolower($c['user']), $user)) {
+                        if (password_verify($pass, (string) $c['hash'])) {
+                            $who = ['client', $slug, $c['uid']];
+                        }
+                        break;
+                    }
+                }
+            }
+            if (!$who) {
                 login_failed();
                 usleep(600000);
                 throw new RuntimeException('Usuário ou senha incorretos.');
             }
             login_reset();
             session_regenerate_id(true);
-            $_SESSION['uid'] = $admin['uid'];
-            if (password_needs_rehash($admin['hash'], PASSWORD_DEFAULT)) {
-                $admin['hash'] = password_hash((string) $_POST['pass'], PASSWORD_DEFAULT);
+            [$_SESSION['role'], $_SESSION['tenant'], $_SESSION['uid']] = $who;
+            unset($_SESSION['as']);
+            if ($who[0] === 'master' && password_needs_rehash($admin['hash'], PASSWORD_DEFAULT)) {
+                $admin['hash'] = password_hash($pass, PASSWORD_DEFAULT);
                 rp_write_php(RP_ADMIN, $admin);
             }
             go();
@@ -176,11 +222,139 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
             go();
         }
 
+        $masterActions = ['client_save', 'client_delete', 'client_enter', 'client_leave', 'platform_save'];
+        if (in_array($action, $masterActions, true) && !$master) {
+            throw new RuntimeException('Ação permitida só para o administrador da plataforma.');
+        }
+        if (!in_array($action, [...$masterActions, 'logout', 'password'], true) && $tenant === null) {
+            throw new RuntimeException('Escolha um cliente para editar.');
+        }
+
         switch ($action) {
             case 'logout':
                 $_SESSION = [];
                 session_destroy();
                 go();
+
+            // ----- Clientes (master) -----
+            case 'client_save':
+                $orig = (string) ($_POST['orig'] ?? '');
+                $isNew = $orig === '';
+                $slug = $isNew ? strtolower(trim((string) ($_POST['slug'] ?? ''))) : $orig;
+                $name = rp_clean($_POST['name'] ?? '', 80);
+                $user = mb_strtolower(rp_clean($_POST['user'] ?? '', 80));
+                $pass = (string) ($_POST['pass'] ?? '');
+                if ($name === '') {
+                    throw new RuntimeException('Informe o nome do cliente.');
+                }
+                if (!rp_valid_slug($slug)) {
+                    throw new RuntimeException('Endereço inválido: use letras minúsculas, números e hífen (ex.: radio-nova-fm).');
+                }
+                if ($isNew && ($user === '' || mb_strlen($pass) < 8)) {
+                    throw new RuntimeException('Informe o usuário e uma senha de pelo menos 8 caracteres.');
+                }
+                if ($pass !== '' && mb_strlen($pass) < 8) {
+                    throw new RuntimeException('A senha precisa ter pelo menos 8 caracteres.');
+                }
+                $status = ($_POST['status'] ?? 'active') === 'suspended' ? 'suspended' : 'active';
+                rp_locked(function () use ($isNew, $slug, $name, $user, $pass, $status, $admin) {
+                    $all = rp_clients();
+                    if ($isNew && isset($all[$slug])) {
+                        throw new RuntimeException('Já existe um cliente com esse endereço.');
+                    }
+                    if (!$isNew && !isset($all[$slug])) {
+                        throw new RuntimeException('Cliente não encontrado.');
+                    }
+                    if ($user !== '') {
+                        if (hash_equals(mb_strtolower((string) $admin['user']), $user)) {
+                            throw new RuntimeException('Esse usuário já é usado pelo administrador.');
+                        }
+                        foreach ($all as $k => $c) {
+                            if ($k !== $slug && mb_strtolower($c['user']) === $user) {
+                                throw new RuntimeException('Esse usuário já é usado por outro cliente.');
+                            }
+                        }
+                    }
+                    $old = $all[$slug] ?? ['hash' => '', 'uid' => rp_id(), 'created_at' => date('Y-m-d'), 'user' => ''];
+                    $c = [
+                        'name' => $name,
+                        'user' => $user,
+                        'hash' => $pass !== '' ? password_hash($pass, PASSWORD_DEFAULT) : $old['hash'],
+                        // Trocar usuário ou senha desconecta o cliente dos aparelhos onde estava logado.
+                        'uid' => ($pass !== '' || $user !== $old['user']) && !$isNew ? rp_id() : $old['uid'],
+                        'status' => $status,
+                        'expires' => rp_date($_POST['expires'] ?? ''),
+                        'max_stations' => min(999, max(0, (int) ($_POST['max_stations'] ?? 0))),
+                        'phone' => rp_clean($_POST['phone'] ?? '', 40),
+                        'notes' => rp_clean_text($_POST['notes'] ?? '', 500),
+                        'created_at' => $old['created_at'],
+                    ];
+                    $all[$slug] = $c;
+                    rp_save_clients($all);
+                });
+                if ($isNew) {
+                    // Cria o app do cliente já com o nome dele.
+                    rp_use_tenant($slug);
+                    rp_update_config(function ($cfg) use ($name) {
+                        $cfg['settings']['title'] = $name;
+                        $cfg['settings']['short_name'] = mb_substr($name, 0, 12);
+                        return $cfg;
+                    });
+                    rp_use_tenant($tenant);
+                }
+                if ($pass !== '') {
+                    $_SESSION['cred'] = ['name' => $name, 'app' => app_url($slug), 'panel' => base_url() . 'admin/', 'user' => $user, 'pass' => $pass];
+                }
+                flash($isNew ? 'Cliente criado.' : 'Cliente atualizado.');
+                go('tab=clientes');
+
+            case 'client_delete':
+                $slug = (string) ($_POST['id'] ?? '');
+                if (!isset($clients[$slug]) || ($_POST['confirm'] ?? '') !== $slug) {
+                    throw new RuntimeException('Para excluir, digite o endereço do cliente exatamente como aparece.');
+                }
+                rp_locked(function () use ($slug) {
+                    $all = rp_clients();
+                    unset($all[$slug]);
+                    rp_save_clients($all);
+                    $p = rp_platform();
+                    if ($p['default_tenant'] === $slug) {
+                        $p['default_tenant'] = '';
+                        rp_save_platform($p);
+                    }
+                });
+                rp_rmtree(RP_TENANTS . '/' . $slug);
+                rp_rmtree(RP_UPLOADS . '/' . $slug);
+                if (($_SESSION['as'] ?? null) === $slug) {
+                    unset($_SESSION['as']);
+                }
+                flash('Cliente excluído, com o app, as imagens e as estatísticas.');
+                go('tab=clientes');
+
+            case 'client_enter':
+                $slug = (string) ($_POST['id'] ?? '');
+                if (!isset($clients[$slug])) {
+                    throw new RuntimeException('Cliente não encontrado.');
+                }
+                $_SESSION['as'] = $slug;
+                go('tab=inicio');
+
+            case 'client_leave':
+                unset($_SESSION['as']);
+                go('tab=clientes');
+
+            case 'platform_save':
+                $def = (string) ($_POST['default_tenant'] ?? '');
+                rp_locked(function () use ($def, $clients) {
+                    $p = rp_platform();
+                    $brand = rp_clean($_POST['brand'] ?? '', 60);
+                    $p['brand'] = $brand !== '' ? $brand : 'Rádio Player';
+                    $p['support_whatsapp'] = rp_clean($_POST['support_whatsapp'] ?? '', 40);
+                    $p['default_tenant'] = isset($clients[$def]) ? $def : '';
+                    rp_save_platform($p);
+                });
+                flash('Configurações da plataforma salvas.');
+                go('tab=plataforma');
 
             // ----- Rádios -----
             case 'station_save':
@@ -189,6 +363,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                 $stream = rp_url($_POST['stream'] ?? '');
                 if ($name === '' || $stream === '') {
                     throw new RuntimeException('Informe o nome e uma URL de streaming válida (http/https).');
+                }
+                $limit = (int) ($client['max_stations'] ?? 0);
+                if ($id === '' && $limit > 0 && count(rp_config()['stations']) >= $limit) {
+                    throw new RuntimeException("Seu plano permite até {$limit} rádio(s). Fale com o suporte para ampliar.");
                 }
                 $upload = rp_save_upload('logo_file', 600);
                 rp_update_config(function ($cfg) use ($id, $name, $stream, $upload) {
@@ -422,9 +600,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
 
             case 'ad_reset':
                 rp_locked(function () {
-                    $stats = rp_read_json(RP_STATS, []);
+                    $stats = rp_read_json(rp_stats_file(), []);
                     unset($stats[(string) $_POST['id']]);
-                    rp_write_atomic(RP_STATS, json_encode($stats));
+                    rp_write_atomic(rp_stats_file(), json_encode($stats));
                 });
                 flash('Contadores zerados.');
                 go('tab=publicidade');
@@ -458,7 +636,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                         rp_delete_upload($s['logo']);
                         $s['logo'] = $upload;
                         foreach (['icon-192.png', 'icon-512.png', 'maskable-512.png'] as $f) {
-                            @unlink(RP_UPLOADS . '/app-' . $f);
+                            @unlink(rp_upload_dir() . '/app-' . $f);
                         }
                     }
                     if ($s['logo'] !== '') {
@@ -471,18 +649,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
 
             // ----- Conta -----
             case 'password':
-                if (!password_verify((string) ($_POST['current'] ?? ''), (string) $admin['hash'])) {
+                $isClient = $role === 'client';
+                $current = $isClient ? $client['hash'] : $admin['hash'];
+                if (!password_verify((string) ($_POST['current'] ?? ''), (string) $current)) {
                     throw new RuntimeException('Senha atual incorreta.');
                 }
                 $pass = (string) ($_POST['pass'] ?? '');
                 if (mb_strlen($pass) < 8 || $pass !== ($_POST['pass2'] ?? '')) {
                     throw new RuntimeException('A nova senha precisa ter 8+ caracteres e ser repetida igual.');
                 }
-                $user = rp_clean($_POST['user'] ?? '', 60) ?: $admin['user'];
                 $uid = rp_id(); // derruba as outras sessões abertas
-                rp_locked(fn () => rp_write_php(RP_ADMIN, ['user' => $user, 'hash' => password_hash($pass, PASSWORD_DEFAULT), 'uid' => $uid]));
+                if ($isClient) {
+                    rp_locked(function () use ($tenant, $pass, $uid) {
+                        $all = rp_clients();
+                        $all[$tenant]['hash'] = password_hash($pass, PASSWORD_DEFAULT);
+                        $all[$tenant]['uid'] = $uid;
+                        rp_save_clients($all);
+                    });
+                } else {
+                    $user = rp_clean($_POST['user'] ?? '', 60) ?: $admin['user'];
+                    rp_locked(fn () => rp_write_php(RP_ADMIN, ['user' => $user, 'hash' => password_hash($pass, PASSWORD_DEFAULT), 'uid' => $uid]));
+                }
                 $_SESSION['uid'] = $uid;
-                flash('Acesso atualizado.');
+                flash('Senha atualizada.');
                 go('tab=conta');
         }
         go($back);
@@ -496,21 +685,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
 
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['flash']);
-$cfg = $logged ? rp_config() : ['settings' => rp_defaults()['settings']];
+$cred = $_SESSION['cred'] ?? null;
+unset($_SESSION['cred']);
+$cfg = $tenant !== null ? rp_config() : ['settings' => rp_defaults()['settings']];
 $s = $cfg['settings'];
-$tab = (string) ($_GET['tab'] ?? 'inicio');
-$edit = (string) ($_GET['edit'] ?? '');
-$tabs = [
-    'inicio' => 'Início',
-    'radios' => 'Rádios',
-    'estilos' => 'Estilos',
-    'publicidade' => 'Publicidade',
-    'aparencia' => 'Aparência',
-    'conta' => 'Conta',
-];
-if (!isset($tabs[$tab])) {
-    $tab = 'inicio';
+if ($tenant === null) {
+    $s['title'] = $platform['brand'];
 }
+$edit = (string) ($_GET['edit'] ?? '');
+if ($tenant !== null) {
+    $tabs = ['inicio' => 'Início', 'radios' => 'Rádios', 'estilos' => 'Estilos', 'publicidade' => 'Publicidade', 'aparencia' => 'Aparência'];
+    if ($role === 'client') {
+        $tabs['conta'] = 'Senha';
+    }
+} else {
+    $tabs = ['clientes' => 'Clientes', 'plataforma' => 'Plataforma', 'conta' => 'Minha senha'];
+}
+$tab = (string) ($_GET['tab'] ?? array_key_first($tabs));
+if (!isset($tabs[$tab])) {
+    $tab = array_key_first($tabs);
+}
+$clientState = $client ? rp_client_state($client) : 'active';
+$support = rp_whatsapp_link($platform['support_whatsapp']);
 $back = h(http_build_query(array_filter(['tab' => $tab, 'edit' => $edit])));
 
 /** Formulário de uma ação simples (um botão). */
@@ -545,8 +741,9 @@ function action_btn(string $action, string $id, string $label, string $class = '
   <main class="auth">
     <form method="post" class="card">
       <img src="../icons/icon.svg" alt="" width="56" height="56">
-      <h1><?= $setup ? 'Criar administrador' : 'Painel da rádio' ?></h1>
-      <?php if ($setup): ?><p class="hint">Primeiro acesso: defina o usuário e a senha do painel.</p><?php endif; ?>
+      <h1><?= $setup ? 'Criar administrador' : h($platform['brand']) ?></h1>
+      <?php if ($setup): ?><p class="hint">Primeiro acesso: defina o usuário e a senha do administrador da plataforma (você).</p>
+      <?php else: ?><p class="hint">Entre com o usuário e a senha do seu painel.</p><?php endif; ?>
       <?php if ($flash): ?><p class="alert <?= h($flash[1]) ?>"><?= h($flash[0]) ?></p><?php endif; ?>
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="<?= $setup ? 'setup' : 'login' ?>">
@@ -560,7 +757,7 @@ function action_btn(string $action, string $id, string $label, string $class = '
   <header class="top">
     <a class="brand" href="./"><img src="<?= h($s['logo'] ? img_url($s['logo']) : '../icons/icon.svg') ?>" alt=""><span><?= h($s['title']) ?></span></a>
     <div class="top-actions">
-      <a class="btn sm" href="../" target="_blank" rel="noopener">Abrir app ↗</a>
+      <?php if ($tenant !== null): ?><a class="btn sm" href="../r/<?= h($tenant) ?>/" target="_blank" rel="noopener">Abrir app ↗</a><?php endif; ?>
       <form method="post" class="inline"><?= csrf_field() ?><input type="hidden" name="action" value="logout"><button class="btn sm ghost">Sair</button></form>
     </div>
   </header>
@@ -570,17 +767,29 @@ function action_btn(string $action, string $id, string $label, string $class = '
     <?php endforeach; ?>
   </nav>
   <main class="content">
+    <?php if ($master && $tenant !== null): ?>
+      <div class="as-bar">
+        <span>Você está no painel de <b><?= h($client['name']) ?></b> (cliente).</span>
+        <?= action_btn('client_leave', '', '← Voltar para clientes', 'btn sm') ?>
+      </div>
+    <?php endif; ?>
+    <?php if ($tenant !== null && $clientState !== 'active'): ?>
+      <p class="alert err">
+        <?= $clientState === 'expired' ? 'A assinatura deste app venceu' : 'Este app está suspenso' ?>: os ouvintes veem a mensagem "temporariamente indisponível".
+        <?php if ($role === 'client' && $support): ?><a href="<?= h($support) ?>" target="_blank" rel="noopener">Fale com o suporte</a>.<?php endif; ?>
+      </p>
+    <?php endif; ?>
     <?php if ($flash): ?><p class="alert <?= h($flash[1]) ?>"><?= h($flash[0]) ?></p><?php endif; ?>
 
 <?php
 // ======================= INÍCIO =======================
 if ($tab === 'inicio'):
-    $stats = rp_read_json(RP_STATS, []);
+    $stats = rp_read_json(rp_stats_file(), []);
     $liveAds = array_filter($cfg['ads'], fn ($a) => rp_ad_is_live($a));
     $activeSt = array_filter($cfg['stations'], fn ($x) => !empty($x['active']));
     $views = array_sum(array_column($stats, 'views'));
     $clicks = array_sum(array_column($stats, 'clicks'));
-    $appUrl = ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'])), '/') . '/';
+    $appUrl = app_url($tenant);
 ?>
     <h2>Visão geral</h2>
     <div class="stats">
@@ -709,7 +918,7 @@ elseif ($tab === 'estilos'):
 <?php
 // ======================= PUBLICIDADE =======================
 elseif ($tab === 'publicidade'):
-    $stats = rp_read_json(RP_STATS, []);
+    $stats = rp_read_json(rp_stats_file(), []);
     if ($edit !== ''):
         $i = find_index($cfg['ads'], $edit);
         $ad = $i >= 0 ? $cfg['ads'][$i] : ['id' => '', 'title' => '', 'text' => '', 'image' => '', 'link' => '', 'position' => (string) ($_GET['pos'] ?? 'top'), 'starts' => '', 'ends' => '', 'active' => true];
@@ -858,6 +1067,151 @@ elseif ($tab === 'aparencia'):
     </form>
 
 <?php
+// ======================= CLIENTES (master) =======================
+elseif ($tab === 'clientes'):
+    if ($edit !== ''):
+        $c = $clients[$edit] ?? null;
+        $isNew = $c === null;
+        $c ??= ['name' => '', 'user' => '', 'status' => 'active', 'expires' => '', 'max_stations' => 0, 'phone' => '', 'notes' => ''];
+        $suggestPass = substr(str_replace(['+', '/', '='], '', base64_encode(random_bytes(9))), 0, 10);
+?>
+    <div class="head"><h2><?= $isNew ? 'Novo cliente' : 'Editar cliente' ?></h2><a class="btn sm ghost" href="?tab=clientes">← Voltar</a></div>
+    <form method="post" class="card form">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="client_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <input type="hidden" name="orig" value="<?= $isNew ? '' : h($edit) ?>">
+      <h3>Cliente</h3>
+      <div class="grid2">
+        <label>Nome da rádio / cliente *<input name="name" id="cName" required maxlength="80" value="<?= h($c['name']) ?>" placeholder="Ex.: Rádio Nova Geração"></label>
+        <label>WhatsApp do cliente<input name="phone" maxlength="40" value="<?= h($c['phone']) ?>" placeholder="(14) 99999-0000"></label>
+      </div>
+      <label>Endereço do app *
+        <?php if ($isNew): ?>
+          <span class="slug"><span><?= h(base_url()) ?>r/</span><input name="slug" id="cSlug" required maxlength="40" pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" placeholder="radio-nova-geracao"><span>/</span></span>
+          <small>Letras minúsculas, números e hífen. Não pode ser trocado depois.</small>
+        <?php else: ?>
+          <span class="slug"><a href="<?= h(app_url($edit)) ?>" target="_blank" rel="noopener"><?= h(app_url($edit)) ?></a></span>
+        <?php endif; ?>
+      </label>
+      <h3>Acesso ao painel</h3>
+      <div class="grid2">
+        <label>Usuário (login) <?= $isNew ? '*' : '' ?><input name="user" maxlength="80" value="<?= h($c['user']) ?>" <?= $isNew ? 'required' : '' ?> autocomplete="off" placeholder="email ou nome de usuário"></label>
+        <label><?= $isNew ? 'Senha *' : 'Nova senha (deixe em branco para manter)' ?>
+          <span class="copy"><input name="pass" id="cPass" minlength="8" <?= $isNew ? 'required value="' . h($suggestPass) . '"' : '' ?> autocomplete="new-password"><button class="btn sm" type="button" onclick="document.getElementById('cPass').value='<?= h($suggestPass) ?>'">Gerar</button></span>
+        </label>
+      </div>
+      <h3>Plano</h3>
+      <div class="grid2">
+        <label>Situação
+          <select name="status">
+            <option value="active" <?= $c['status'] !== 'suspended' ? 'selected' : '' ?>>Ativo</option>
+            <option value="suspended" <?= $c['status'] === 'suspended' ? 'selected' : '' ?>>Suspenso (app fora do ar)</option>
+          </select>
+        </label>
+        <label>Vencimento<input type="date" name="expires" value="<?= h($c['expires']) ?>"><small>Depois desta data o app sai do ar sozinho. Em branco: sem vencimento.</small></label>
+        <label>Limite de rádios<input type="number" name="max_stations" min="0" max="999" value="<?= (int) $c['max_stations'] ?>"><small>0 = sem limite.</small></label>
+      </div>
+      <label>Observações (só você vê)<textarea name="notes" rows="2" maxlength="500"><?= h($c['notes']) ?></textarea></label>
+      <div class="actions"><button class="btn primary"><?= $isNew ? 'Criar cliente' : 'Salvar' ?></button></div>
+    </form>
+    <?php if (!$isNew): ?>
+    <form method="post" class="card form danger-zone">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="client_delete">
+      <input type="hidden" name="id" value="<?= h($edit) ?>">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <h3>Excluir cliente</h3>
+      <p class="hint">Apaga o app, as rádios, os anúncios, as imagens e as estatísticas deste cliente. Não dá para desfazer.</p>
+      <label>Digite <code><?= h($edit) ?></code> para confirmar<input name="confirm" autocomplete="off"></label>
+      <div class="actions"><button class="btn danger">Excluir definitivamente</button></div>
+    </form>
+    <?php endif; ?>
+    <script>
+      (() => {
+        const n = document.getElementById('cName'), s = document.getElementById('cSlug');
+        if (!n || !s) return;
+        let touched = false;
+        s.addEventListener('input', () => { touched = true; });
+        n.addEventListener('input', () => {
+          if (touched) return;
+          s.value = n.value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        });
+      })();
+    </script>
+<?php else:
+    $today = date('Y-m-d');
+?>
+    <?php if ($cred): $msg = "Olá! Seu aplicativo {$cred['name']} está pronto.\n\nApp para os ouvintes: {$cred['app']}\n\nPainel para editar: {$cred['panel']}\nUsuário: {$cred['user']}\nSenha: {$cred['pass']}"; ?>
+      <div class="card cred">
+        <h3>Dados de acesso de <?= h($cred['name']) ?></h3>
+        <p class="hint">Copie e envie ao cliente agora. Por segurança, a senha não aparece de novo.</p>
+        <textarea readonly rows="7" id="credMsg"><?= h($msg) ?></textarea>
+        <div class="actions">
+          <button class="btn primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('credMsg').value).then(()=>{this.textContent='Copiado!'})">Copiar mensagem</button>
+        </div>
+      </div>
+    <?php endif; ?>
+    <div class="head"><h2>Clientes</h2><a class="btn primary" href="?tab=clientes&edit=new">+ Novo cliente</a></div>
+    <?php if (!$clients): ?>
+      <p class="empty">Nenhum cliente ainda. Cadastre o primeiro para gerar o link do app e o acesso ao painel.</p>
+    <?php else: ?>
+    <div class="stats">
+      <?php $counts = array_count_values(array_map('rp_client_state', $clients)); ?>
+      <div class="stat"><strong><?= count($clients) ?></strong><span>clientes</span></div>
+      <div class="stat"><strong><?= (int) ($counts['active'] ?? 0) ?></strong><span>ativos</span></div>
+      <div class="stat"><strong><?= (int) ($counts['expired'] ?? 0) ?></strong><span>vencidos</span></div>
+      <div class="stat"><strong><?= (int) ($counts['suspended'] ?? 0) ?></strong><span>suspensos</span></div>
+    </div>
+    <div class="rows">
+      <?php foreach ($clients as $slug => $c):
+          $state = rp_client_state($c);
+          $cc = rp_read_json(RP_TENANTS . '/' . $slug . '/config.json', []);
+          $nSt = count($cc['stations'] ?? []);
+          $logo = $cc['settings']['logo'] ?? '';
+          $soon = $state === 'active' && $c['expires'] && $c['expires'] <= date('Y-m-d', strtotime('+7 days'));
+      ?>
+      <div class="row<?= $state !== 'active' ? ' off' : '' ?>">
+        <span class="thumb"><?php if ($logo): ?><img src="<?= h(img_url($logo)) ?>" alt=""><?php else: ?><?= h(mb_strtoupper(mb_substr($c['name'], 0, 2))) ?><?php endif; ?></span>
+        <div class="row-main">
+          <strong><?= h($c['name']) ?><?php if ($platform['default_tenant'] === $slug): ?> <span class="badge">endereço principal</span><?php endif; ?></strong>
+          <small><a href="<?= h(app_url($slug)) ?>" target="_blank" rel="noopener" class="mono">/r/<?= h($slug) ?>/</a> · <?= $c['user'] !== '' ? 'login: ' . h($c['user']) : 'sem login de cliente' ?> · <?= $nSt ?> rádio(s)<?= $c['max_stations'] ? ' de ' . (int) $c['max_stations'] : '' ?></small>
+        </div>
+        <span class="badge <?= $state === 'active' ? 'on' : 'bad' ?>"><?= CLIENT_STATES[$state] ?></span>
+        <small class="due<?= $soon ? ' soon' : '' ?>"><?= $c['expires'] ? 'vence ' . date('d/m/Y', strtotime($c['expires'])) : 'sem vencimento' ?></small>
+        <div class="row-actions">
+          <?= action_btn('client_enter', $slug, 'Entrar no painel', 'btn sm primary') ?>
+          <a class="btn sm" href="?tab=clientes&edit=<?= h($slug) ?>">Editar</a>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+<?php endif; ?>
+
+<?php
+// ======================= PLATAFORMA (master) =======================
+elseif ($tab === 'plataforma'):
+?>
+    <div class="head"><h2>Plataforma</h2></div>
+    <form method="post" class="card form">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="platform_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <div class="grid2">
+        <label>Nome da sua empresa / plataforma<input name="brand" maxlength="60" value="<?= h($platform['brand']) ?>"><small>Aparece na tela de login do painel.</small></label>
+        <label>WhatsApp de suporte<input name="support_whatsapp" maxlength="40" value="<?= h($platform['support_whatsapp']) ?>" placeholder="(14) 99999-0000"><small>Aparece para clientes vencidos/suspensos e nos apps fora do ar.</small></label>
+      </div>
+      <label>App aberto no endereço principal (<?= h(base_url()) ?>)
+        <select name="default_tenant">
+          <option value="">— nenhum (mostra "nenhum aplicativo neste endereço") —</option>
+          <?php foreach ($clients as $slug => $c): ?><option value="<?= h($slug) ?>" <?= $platform['default_tenant'] === $slug ? 'selected' : '' ?>><?= h($c['name']) ?> (/r/<?= h($slug) ?>/)</option><?php endforeach; ?>
+        </select>
+      </label>
+      <div class="actions"><button class="btn primary">Salvar</button></div>
+    </form>
+
+<?php
 // ======================= CONTA =======================
 else:
 ?>
@@ -866,7 +1220,11 @@ else:
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="password">
       <input type="hidden" name="back" value="<?= $back ?>">
-      <label>Usuário<input name="user" value="<?= h($admin['user']) ?>" maxlength="60" autocomplete="username"></label>
+      <?php if ($role === 'client'): ?>
+        <label>Usuário<input value="<?= h($client['user']) ?>" readonly autocomplete="username"><small>Para trocar o usuário, fale com o suporte.</small></label>
+      <?php else: ?>
+        <label>Usuário<input name="user" value="<?= h($admin['user']) ?>" maxlength="60" autocomplete="username"></label>
+      <?php endif; ?>
       <label>Senha atual<input type="password" name="current" required autocomplete="current-password"></label>
       <label>Nova senha<input type="password" name="pass" required minlength="8" autocomplete="new-password"></label>
       <label>Repita a nova senha<input type="password" name="pass2" required minlength="8" autocomplete="new-password"></label>

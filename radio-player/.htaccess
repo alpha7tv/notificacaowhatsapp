@@ -1,0 +1,12 @@
+# Apache: links dos apps dos clientes (/r/<cliente>/). Requer mod_rewrite.
+Options -Indexes
+DirectoryIndex index.html index.php
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Se o app não estiver na raiz do domínio, ajuste: RewriteBase /pasta/
+  RewriteBase /
+  RewriteRule ^r/([a-z0-9-]+)$ r/$1/ [R=301,L]
+  RewriteRule ^r/([a-z0-9-]+)/(api|manifest)\.php$ $2.php?t=$1 [QSA,L]
+  RewriteRule ^r/([a-z0-9-]+)/$ index.html [L]
+  RewriteRule ^r/([a-z0-9-]+)/(.+)$ $2 [L]
+</IfModule>

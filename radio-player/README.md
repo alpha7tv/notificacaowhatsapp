@@ -10,6 +10,21 @@ Tudo funciona com o mesmo endereço (é um PWA), sem precisar publicar em loja.
 
 Usa PHP 8.1+ com GD e fileinfo. **Não precisa de banco de dados**: os dados ficam em `data/`, e as imagens em `uploads/`.
 
+## Plataforma para vários clientes
+
+Cada cliente que contratar tem **o próprio app** e **o próprio painel**:
+
+| Quem | Onde | O que faz |
+|------|------|-----------|
+| **Você (master)** | `/admin/` com o usuário criado no 1º acesso | Abas **Clientes** (cadastrar, vencimento, limite de rádios, suspender, excluir, **Entrar no painel** do cliente para dar suporte), **Plataforma** (nome da sua empresa, WhatsApp de suporte, app do endereço principal) e **Minha senha** |
+| **Cliente** | `/admin/` com o login que você criou | Edita só o próprio app: rádios, estilos, publicidade, aparência e senha |
+| **Ouvintes** | `https://seu-dominio/r/<endereço-do-cliente>/` | App do cliente, instalável com nome, ícone e tema dele |
+
+- Ao criar um cliente, o painel mostra uma **mensagem pronta** com o link do app, o link do painel, o usuário e a senha para você enviar.
+- Cliente **suspenso** ou com **vencimento** passado: o app mostra "temporariamente indisponível" com o botão do seu WhatsApp de suporte; o cliente vê o aviso no painel.
+- Dados de cada cliente: `data/tenants/<endereço>/` e imagens em `uploads/<endereço>/`.
+- Ao atualizar uma instalação antiga (de um app só), ela vira o cliente **principal** automaticamente, sem perder nada, e o endereço principal do site continua abrindo esse app.
+
 ## Painel (`/admin/`)
 
 | Aba | O que faz |
@@ -81,7 +96,7 @@ location ~ ^/uploads/.*\.(php|phtml|phar)$ { deny all; }
 client_max_body_size 5m;
 ```
 
-Teste local: `php -S localhost:8080` dentro da pasta e abra `http://localhost:8080`.
+Teste local: `php -S localhost:8080 deploy/dev-router.php` dentro da pasta e abra `http://localhost:8080`.
 
 ## Observações
 

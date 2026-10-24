@@ -137,3 +137,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .field { display: grid; gap: 8px; align-content: start; }
 .samples { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-style: dashed; }
 .samples .hint { margin: 4px 0 0; }
+.as-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 16px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.slug { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-weight: 400; }
+.slug > span { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .85rem; }
+.slug input { flex: 1; min-width: 160px; }
+.cred { border-color: var(--ok); }
+.cred textarea { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .85rem; }
+.badge.bad { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+.due { color: var(--muted); font-size: .8rem; white-space: nowrap; }
+.due.soon { color: var(--warn); font-weight: 700; }
+.danger-zone { border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+.row-main a { color: inherit; }
