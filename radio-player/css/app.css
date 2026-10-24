@@ -60,7 +60,13 @@ svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
 }
 .icon-btn:hover { background: var(--surface-2); }
 .icon-btn.lg svg { width: 32px; height: 32px; }
-#installBtn { background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: .9rem; padding: 0 16px; height: 36px; }
+.brand img { object-fit: cover; }
+.install-btn {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 38px; padding: 0 14px 0 10px; border: 0; border-radius: 999px;
+  background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: .9rem;
+}
+.install-btn svg { width: 20px; height: 20px; }
 
 /* Busca */
 .search {
@@ -134,7 +140,7 @@ svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
   background: var(--accent); color: var(--accent-text); flex: none;
 }
 .play.sm { width: 48px; height: 48px; }
-.play.lg { width: 76px; height: 76px; box-shadow: 0 10px 30px rgba(229, 72, 77, .4); }
+.play.lg { width: 76px; height: 76px; box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 40%, transparent); }
 .play.lg svg { width: 36px; height: 36px; }
 .play.loading svg { opacity: 0; }
 .play.loading { position: relative; }
@@ -204,6 +210,56 @@ svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
   .art-wrap { grid-row: 2 / 6; }
   .cover.lg { width: min(55vh, 260px); }
 }
+
+/* Publicidade */
+.ad-slot { position: relative; margin: 4px 0 12px; }
+.ad-slot a, .ad-slot .ad-box {
+  display: block; position: relative; overflow: hidden; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border); text-decoration: none; color: inherit;
+}
+.ad-slot img { display: block; width: 100%; height: auto; }
+.ad-top { max-width: 728px; margin-left: auto; margin-right: auto; }
+.ad-top img { aspect-ratio: 4 / 1; object-fit: cover; }
+.ad-player { margin: 0; }
+.ad-player img { aspect-ratio: 6 / 1; object-fit: cover; }
+.ad-text { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+.ad-text div { flex: 1; min-width: 0; }
+.ad-text strong { display: block; }
+.ad-text span { color: var(--muted); font-size: .9rem; }
+.ad-text .ad-cta { color: var(--accent); font-weight: 700; font-size: .9rem; white-space: nowrap; }
+.ad-label {
+  position: absolute; top: 6px; right: 8px; font-size: .66rem; letter-spacing: .04em; text-transform: uppercase;
+  background: rgba(0, 0, 0, .55); color: #fff; padding: 2px 6px; border-radius: 6px; pointer-events: none;
+}
+.ad-slot .fade { animation: fade .5s ease; }
+@keyframes fade { from { opacity: 0; } }
+.player-inner:has(.ad-player:not([hidden])) .cover.lg { width: min(70vw, 300px, 34vh); }
+
+.ad-popup { padding: 0; width: min(90vw, 420px); overflow: visible; background: transparent; box-shadow: none; }
+.ad-popup #adPopupBody > a, .ad-popup #adPopupBody > div { display: block; border-radius: 20px; overflow: hidden; background: var(--surface); text-decoration: none; color: inherit; box-shadow: var(--shadow); }
+.ad-popup img { display: block; width: 100%; height: auto; max-height: 75vh; object-fit: contain; }
+.ad-popup .ad-text { padding: 22px; flex-direction: column; align-items: flex-start; }
+.ad-popup .ad-label { top: 10px; left: 10px; right: auto; }
+.popup-close {
+  position: absolute; top: -14px; right: -10px; z-index: 1; width: 40px; height: 40px; border-radius: 50%;
+  border: 0; display: grid; place-items: center; background: var(--surface); color: var(--text); box-shadow: var(--shadow);
+}
+
+/* Sobre e contatos */
+.about { margin: 28px 0 0; padding: 18px; text-align: center; border-top: 1px solid var(--border); }
+.about p { margin: 0 0 14px; color: var(--muted); white-space: pre-line; }
+.contacts { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+.contacts a {
+  display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+}
+.contacts a:hover { color: var(--accent); }
+
+/* Instalação */
+#installSteps ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+#installSteps svg { width: 18px; height: 18px; vertical-align: -3px; }
+.install-note { color: var(--muted); font-size: .88rem; margin: 14px 0; }
+.btn-primary { width: 100%; height: 44px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-text); font-weight: 700; }
 
 /* Diálogo do timer */
 dialog {

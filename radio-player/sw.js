@@ -1,12 +1,12 @@
 // Service worker: guarda a "casca" do app para abrir rápido e funcionar como aplicativo.
 // Os streams de áudio NUNCA passam pelo cache.
-const CACHE = 'radio-player-v1';
+const CACHE = 'radio-player-v2';
 const SHELL = [
   './',
   'index.html',
   'css/app.css',
   'js/app.js',
-  'manifest.webmanifest',
+  'manifest.php',
   'icons/icon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -29,6 +29,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   // Só arquivos do próprio app; áudio, metadados e logos externos vão direto para a rede.
   if (req.method !== 'GET' || url.origin !== location.origin || req.headers.has('range')) return;
+  // O painel administrativo nunca usa cache.
+  if (url.pathname.includes('/admin/')) return;
 
   // Rede primeiro (para pegar atualizações), cache como reserva quando offline.
   e.respondWith(

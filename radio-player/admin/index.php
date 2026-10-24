@@ -1,0 +1,824 @@
+<?php
+declare(strict_types=1);
+
+/*
+ * Painel administrativo do Rádio Player.
+ * Rádios (streaming), estilos, publicidade, aparência/contatos e senha.
+ */
+
+require __DIR__ . '/../lib/bootstrap.php';
+
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: same-origin');
+header('Cache-Control: no-store');
+
+$https = ($_SERVER['HTTPS'] ?? '') === 'on' || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
+session_name('rpadmin');
+session_set_cookie_params([
+    'path' => rtrim(dirname($_SERVER['SCRIPT_NAME']), '/') . '/',
+    'httponly' => true,
+    'secure' => $https,
+    'samesite' => 'Lax',
+]);
+session_start();
+
+// ---------- Helpers ----------
+
+function csrf(): string
+{
+    return $_SESSION['csrf'] ??= bin2hex(random_bytes(16));
+}
+
+function csrf_field(): string
+{
+    return '<input type="hidden" name="_csrf" value="' . h(csrf()) . '">';
+}
+
+function flash(string $msg, string $type = 'ok'): void
+{
+    $_SESSION['flash'] = [$msg, $type];
+}
+
+function go(string $query = ''): never
+{
+    header('Location: ./' . ($query !== '' ? '?' . $query : ''));
+    exit;
+}
+
+function client_ip(): string
+{
+    return (string) ($_SERVER['REMOTE_ADDR'] ?? '0');
+}
+
+function login_blocked(): int
+{
+    $a = rp_read_php(RP_LOGIN)[client_ip()] ?? null;
+    if (!$a || $a['count'] < 5) {
+        return 0;
+    }
+    $left = $a['first'] + 900 - time();
+    return max(0, $left);
+}
+
+function login_failed(): void
+{
+    rp_locked(function () {
+        $all = array_filter(rp_read_php(RP_LOGIN), fn ($a) => $a['first'] + 900 > time());
+        $ip = client_ip();
+        $all[$ip] = isset($all[$ip]) ? ['count' => $all[$ip]['count'] + 1, 'first' => $all[$ip]['first']] : ['count' => 1, 'first' => time()];
+        rp_write_php(RP_LOGIN, $all);
+    });
+}
+
+function login_reset(): void
+{
+    rp_locked(function () {
+        $all = rp_read_php(RP_LOGIN);
+        unset($all[client_ip()]);
+        rp_write_php(RP_LOGIN, $all);
+    });
+}
+
+function find_index(array $list, string $id): int
+{
+    foreach ($list as $i => $item) {
+        if (($item['id'] ?? '') === $id) {
+            return $i;
+        }
+    }
+    return -1;
+}
+
+function move_item(array $list, string $id, int $dir): array
+{
+    $i = find_index($list, $id);
+    $j = $i + $dir;
+    if ($i >= 0 && $j >= 0 && $j < count($list)) {
+        [$list[$i], $list[$j]] = [$list[$j], $list[$i]];
+    }
+    return $list;
+}
+
+function img_url(?string $path): string
+{
+    if (!$path) {
+        return '';
+    }
+    return preg_match('~^https?://~i', $path) ? $path : '../' . $path;
+}
+
+// ---------- Estado ----------
+
+$admin = rp_read_php(RP_ADMIN);
+$setup = empty($admin['hash']);
+$logged = !$setup && !empty($_SESSION['uid']) && ($_SESSION['uid'] === ($admin['uid'] ?? null));
+$fatal = null;
+try {
+    rp_ensure_dirs();
+} catch (RuntimeException $e) {
+    $fatal = $e->getMessage();
+}
+
+// ---------- Ações (POST) ----------
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
+    $action = (string) ($_POST['action'] ?? '');
+    $back = (string) ($_POST['back'] ?? '');
+
+    if (!hash_equals(csrf(), (string) ($_POST['_csrf'] ?? ''))) {
+        flash('Sessão expirada. Tente novamente.', 'err');
+        go($back);
+    }
+
+    try {
+        if ($setup && $action === 'setup') {
+            $user = rp_clean($_POST['user'] ?? '', 60);
+            $pass = (string) ($_POST['pass'] ?? '');
+            if ($user === '' || mb_strlen($pass) < 8 || $pass !== ($_POST['pass2'] ?? '')) {
+                throw new RuntimeException('Informe o usuário e uma senha de pelo menos 8 caracteres (repetida igual).');
+            }
+            rp_locked(function () use ($user, $pass) {
+                if (!empty(rp_read_php(RP_ADMIN)['hash'])) {
+                    throw new RuntimeException('O administrador já foi criado.');
+                }
+                rp_write_php(RP_ADMIN, ['user' => $user, 'hash' => password_hash($pass, PASSWORD_DEFAULT), 'uid' => rp_id()]);
+            });
+            rp_config(); // cria a configuração inicial com os estilos padrão
+            session_regenerate_id(true);
+            $_SESSION['uid'] = rp_read_php(RP_ADMIN)['uid'];
+            flash('Administrador criado. Agora cadastre suas rádios.');
+            go('tab=radios&edit=new');
+        }
+
+        if (!$setup && $action === 'login') {
+            if ($wait = login_blocked()) {
+                throw new RuntimeException('Muitas tentativas. Aguarde ' . ceil($wait / 60) . ' min.');
+            }
+            $ok = hash_equals((string) $admin['user'], rp_clean($_POST['user'] ?? '', 60))
+                & password_verify((string) ($_POST['pass'] ?? ''), (string) $admin['hash']);
+            if (!$ok) {
+                login_failed();
+                usleep(600000);
+                throw new RuntimeException('Usuário ou senha incorretos.');
+            }
+            login_reset();
+            session_regenerate_id(true);
+            $_SESSION['uid'] = $admin['uid'];
+            if (password_needs_rehash($admin['hash'], PASSWORD_DEFAULT)) {
+                $admin['hash'] = password_hash((string) $_POST['pass'], PASSWORD_DEFAULT);
+                rp_write_php(RP_ADMIN, $admin);
+            }
+            go();
+        }
+
+        if (!$logged) {
+            go();
+        }
+
+        switch ($action) {
+            case 'logout':
+                $_SESSION = [];
+                session_destroy();
+                go();
+
+            // ----- Rádios -----
+            case 'station_save':
+                $id = (string) ($_POST['id'] ?? '');
+                $name = rp_clean($_POST['name'] ?? '', 80);
+                $stream = rp_url($_POST['stream'] ?? '');
+                if ($name === '' || $stream === '') {
+                    throw new RuntimeException('Informe o nome e uma URL de streaming válida (http/https).');
+                }
+                $upload = rp_save_upload('logo_file', 600);
+                rp_update_config(function ($cfg) use ($id, $name, $stream, $upload) {
+                    $i = $id !== '' ? find_index($cfg['stations'], $id) : -1;
+                    $old = $i >= 0 ? $cfg['stations'][$i] : ['id' => rp_id(), 'logo' => ''];
+                    $logo = $old['logo'];
+                    if ($upload !== '' || !empty($_POST['logo_remove'])) {
+                        rp_delete_upload($logo);
+                        $logo = $upload;
+                    }
+                    $genreIds = array_column($cfg['genres'], 'id');
+                    $st = [
+                        'id' => $old['id'],
+                        'name' => $name,
+                        'stream' => $stream,
+                        'logo' => $logo,
+                        'genre' => in_array($_POST['genre'] ?? '', $genreIds, true) ? $_POST['genre'] : '',
+                        'city' => rp_clean($_POST['city'] ?? '', 80),
+                        'slogan' => rp_clean($_POST['slogan'] ?? '', 120),
+                        'metadata' => rp_url($_POST['metadata'] ?? ''),
+                        'active' => !empty($_POST['active']),
+                    ];
+                    if ($i >= 0) {
+                        $cfg['stations'][$i] = $st;
+                    } else {
+                        $cfg['stations'][] = $st;
+                    }
+                    return $cfg;
+                });
+                flash('Rádio salva.');
+                go('tab=radios');
+
+            case 'station_delete':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['stations'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        rp_delete_upload($cfg['stations'][$i]['logo'] ?? '');
+                        array_splice($cfg['stations'], $i, 1);
+                    }
+                    return $cfg;
+                });
+                flash('Rádio excluída.');
+                go('tab=radios');
+
+            case 'station_move':
+                rp_update_config(function ($cfg) {
+                    $cfg['stations'] = move_item($cfg['stations'], (string) $_POST['id'], (int) $_POST['dir']);
+                    return $cfg;
+                });
+                go('tab=radios');
+
+            case 'station_toggle':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['stations'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        $cfg['stations'][$i]['active'] = empty($cfg['stations'][$i]['active']);
+                    }
+                    return $cfg;
+                });
+                go('tab=radios');
+
+            // ----- Estilos -----
+            case 'genre_add':
+                $name = rp_clean($_POST['name'] ?? '', 40);
+                if ($name === '') {
+                    throw new RuntimeException('Informe o nome do estilo.');
+                }
+                rp_update_config(function ($cfg) use ($name) {
+                    foreach ($cfg['genres'] as $g) {
+                        if (mb_strtolower($g['name']) === mb_strtolower($name)) {
+                            throw new RuntimeException('Esse estilo já existe.');
+                        }
+                    }
+                    $cfg['genres'][] = ['id' => rp_id(), 'name' => $name];
+                    return $cfg;
+                });
+                flash('Estilo adicionado.');
+                go('tab=estilos');
+
+            case 'genre_rename':
+                $name = rp_clean($_POST['name'] ?? '', 40);
+                if ($name === '') {
+                    throw new RuntimeException('Informe o nome do estilo.');
+                }
+                rp_update_config(function ($cfg) use ($name) {
+                    $i = find_index($cfg['genres'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        $cfg['genres'][$i]['name'] = $name;
+                    }
+                    return $cfg;
+                });
+                flash('Estilo renomeado.');
+                go('tab=estilos');
+
+            case 'genre_delete':
+                rp_update_config(function ($cfg) {
+                    $id = (string) $_POST['id'];
+                    $i = find_index($cfg['genres'], $id);
+                    if ($i >= 0) {
+                        array_splice($cfg['genres'], $i, 1);
+                        foreach ($cfg['stations'] as &$st) {
+                            if (($st['genre'] ?? '') === $id) {
+                                $st['genre'] = '';
+                            }
+                        }
+                    }
+                    return $cfg;
+                });
+                flash('Estilo excluído. As rádios desse estilo ficaram sem estilo.');
+                go('tab=estilos');
+
+            case 'genre_move':
+                rp_update_config(function ($cfg) {
+                    $cfg['genres'] = move_item($cfg['genres'], (string) $_POST['id'], (int) $_POST['dir']);
+                    return $cfg;
+                });
+                go('tab=estilos');
+
+            // ----- Publicidade -----
+            case 'ad_save':
+                $id = (string) ($_POST['id'] ?? '');
+                $position = (string) ($_POST['position'] ?? '');
+                if (!isset(AD_POSITIONS[$position])) {
+                    throw new RuntimeException('Escolha onde a publicidade vai aparecer.');
+                }
+                $starts = rp_date($_POST['starts'] ?? '');
+                $ends = rp_date($_POST['ends'] ?? '');
+                if ($starts && $ends && $ends < $starts) {
+                    throw new RuntimeException('A data final é anterior à data inicial.');
+                }
+                $upload = rp_save_upload('image_file', 1600);
+                rp_update_config(function ($cfg) use ($id, $position, $starts, $ends, $upload) {
+                    $i = $id !== '' ? find_index($cfg['ads'], $id) : -1;
+                    $old = $i >= 0 ? $cfg['ads'][$i] : ['id' => rp_id(), 'image' => '', 'created_at' => date('Y-m-d')];
+                    $image = $old['image'];
+                    if ($upload !== '' || !empty($_POST['image_remove'])) {
+                        rp_delete_upload($image);
+                        $image = $upload;
+                    }
+                    $title = rp_clean($_POST['title'] ?? '', 80);
+                    if ($image === '' && $title === '') {
+                        rp_delete_upload($upload);
+                        throw new RuntimeException('Envie uma imagem ou preencha ao menos o título.');
+                    }
+                    $ad = [
+                        'id' => $old['id'],
+                        'title' => $title,
+                        'text' => rp_clean($_POST['text'] ?? '', 160),
+                        'image' => $image,
+                        'link' => rp_url($_POST['link'] ?? '') ?: rp_whatsapp_link((string) ($_POST['link'] ?? '')),
+                        'position' => $position,
+                        'starts' => $starts,
+                        'ends' => $ends,
+                        'active' => !empty($_POST['active']),
+                        'created_at' => $old['created_at'] ?? date('Y-m-d'),
+                    ];
+                    if ($i >= 0) {
+                        $cfg['ads'][$i] = $ad;
+                    } else {
+                        $cfg['ads'][] = $ad;
+                    }
+                    return $cfg;
+                });
+                flash('Publicidade salva.');
+                go('tab=publicidade');
+
+            case 'ad_delete':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['ads'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        rp_delete_upload($cfg['ads'][$i]['image'] ?? '');
+                        array_splice($cfg['ads'], $i, 1);
+                    }
+                    return $cfg;
+                });
+                flash('Publicidade excluída.');
+                go('tab=publicidade');
+
+            case 'ad_toggle':
+                rp_update_config(function ($cfg) {
+                    $i = find_index($cfg['ads'], (string) $_POST['id']);
+                    if ($i >= 0) {
+                        $cfg['ads'][$i]['active'] = empty($cfg['ads'][$i]['active']);
+                    }
+                    return $cfg;
+                });
+                go('tab=publicidade');
+
+            case 'ad_move':
+                rp_update_config(function ($cfg) {
+                    $cfg['ads'] = move_item($cfg['ads'], (string) $_POST['id'], (int) $_POST['dir']);
+                    return $cfg;
+                });
+                go('tab=publicidade');
+
+            case 'ad_reset':
+                rp_locked(function () {
+                    $stats = rp_read_json(RP_STATS, []);
+                    unset($stats[(string) $_POST['id']]);
+                    rp_write_atomic(RP_STATS, json_encode($stats));
+                });
+                flash('Contadores zerados.');
+                go('tab=publicidade');
+
+            // ----- Aparência -----
+            case 'settings_save':
+                $upload = rp_save_upload('logo_file', 1024);
+                rp_update_config(function ($cfg) use ($upload) {
+                    $s = &$cfg['settings'];
+                    $title = rp_clean($_POST['title'] ?? '', 60);
+                    $s['title'] = $title !== '' ? $title : 'Rádio Player';
+                    $s['short_name'] = rp_clean($_POST['short_name'] ?? '', 20);
+                    $s['description'] = rp_clean($_POST['description'] ?? '', 160);
+                    $s['accent'] = rp_color($_POST['accent'] ?? '', $s['accent']);
+                    $s['about'] = rp_clean_text($_POST['about'] ?? '', 1000);
+                    $s['whatsapp'] = rp_clean($_POST['whatsapp'] ?? '', 120);
+                    $s['instagram'] = rp_clean($_POST['instagram'] ?? '', 120);
+                    $s['facebook'] = rp_clean($_POST['facebook'] ?? '', 120);
+                    $s['youtube'] = rp_clean($_POST['youtube'] ?? '', 120);
+                    $s['site'] = rp_url($_POST['site'] ?? '');
+                    $s['ad_rotate'] = min(60, max(3, (int) ($_POST['ad_rotate'] ?? 8)));
+                    $s['popup_delay'] = min(60, max(0, (int) ($_POST['popup_delay'] ?? 3)));
+                    if ($upload !== '' || !empty($_POST['logo_remove'])) {
+                        rp_delete_upload($s['logo']);
+                        $s['logo'] = $upload;
+                        foreach (['icon-192.png', 'icon-512.png', 'maskable-512.png'] as $f) {
+                            @unlink(RP_UPLOADS . '/app-' . $f);
+                        }
+                    }
+                    if ($s['logo'] !== '') {
+                        rp_make_icons($s['logo'], $s['accent']);
+                    }
+                    return $cfg;
+                });
+                flash('Aparência salva. Quem já instalou o app verá as mudanças ao abri-lo de novo.');
+                go('tab=aparencia');
+
+            // ----- Conta -----
+            case 'password':
+                if (!password_verify((string) ($_POST['current'] ?? ''), (string) $admin['hash'])) {
+                    throw new RuntimeException('Senha atual incorreta.');
+                }
+                $pass = (string) ($_POST['pass'] ?? '');
+                if (mb_strlen($pass) < 8 || $pass !== ($_POST['pass2'] ?? '')) {
+                    throw new RuntimeException('A nova senha precisa ter 8+ caracteres e ser repetida igual.');
+                }
+                $user = rp_clean($_POST['user'] ?? '', 60) ?: $admin['user'];
+                $uid = rp_id(); // derruba as outras sessões abertas
+                rp_locked(fn () => rp_write_php(RP_ADMIN, ['user' => $user, 'hash' => password_hash($pass, PASSWORD_DEFAULT), 'uid' => $uid]));
+                $_SESSION['uid'] = $uid;
+                flash('Acesso atualizado.');
+                go('tab=conta');
+        }
+        go($back);
+    } catch (RuntimeException $e) {
+        flash($e->getMessage(), 'err');
+        go($back);
+    }
+}
+
+// ---------- Tela ----------
+
+$flash = $_SESSION['flash'] ?? null;
+unset($_SESSION['flash']);
+$cfg = $logged ? rp_config() : ['settings' => rp_defaults()['settings']];
+$s = $cfg['settings'];
+$tab = (string) ($_GET['tab'] ?? 'inicio');
+$edit = (string) ($_GET['edit'] ?? '');
+$tabs = [
+    'inicio' => 'Início',
+    'radios' => 'Rádios',
+    'estilos' => 'Estilos',
+    'publicidade' => 'Publicidade',
+    'aparencia' => 'Aparência',
+    'conta' => 'Conta',
+];
+if (!isset($tabs[$tab])) {
+    $tab = 'inicio';
+}
+$back = h(http_build_query(array_filter(['tab' => $tab, 'edit' => $edit])));
+
+/** Formulário de uma ação simples (um botão). */
+function action_btn(string $action, string $id, string $label, string $class = 'btn sm', array $extra = [], string $confirm = ''): string
+{
+    $html = '<form method="post" class="inline"' . ($confirm ? ' onsubmit="return confirm(\'' . h($confirm) . '\')"' : '') . '>'
+        . csrf_field()
+        . '<input type="hidden" name="action" value="' . h($action) . '">'
+        . '<input type="hidden" name="id" value="' . h($id) . '">';
+    foreach ($extra as $k => $v) {
+        $html .= '<input type="hidden" name="' . h($k) . '" value="' . h((string) $v) . '">';
+    }
+    return $html . '<button class="' . h($class) . '">' . $label . '</button></form>';
+}
+?>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Painel · <?= h($s['title']) ?></title>
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="admin.css">
+  <style>:root { --accent: <?= h($s['accent']) ?>; }</style>
+</head>
+<body>
+<?php if ($fatal): ?>
+  <main class="auth"><div class="card"><h1>Configuração do servidor</h1><p class="alert err"><?= h($fatal) ?></p>
+  <p class="hint">Exemplo: <code>chown -R www-data:www-data data uploads</code></p></div></main>
+<?php elseif ($setup || !$logged): ?>
+  <main class="auth">
+    <form method="post" class="card">
+      <img src="../icons/icon.svg" alt="" width="56" height="56">
+      <h1><?= $setup ? 'Criar administrador' : 'Painel da rádio' ?></h1>
+      <?php if ($setup): ?><p class="hint">Primeiro acesso: defina o usuário e a senha do painel.</p><?php endif; ?>
+      <?php if ($flash): ?><p class="alert <?= h($flash[1]) ?>"><?= h($flash[0]) ?></p><?php endif; ?>
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="<?= $setup ? 'setup' : 'login' ?>">
+      <label>Usuário<input name="user" required autocomplete="username" value="<?= $setup ? 'admin' : '' ?>"></label>
+      <label>Senha<input name="pass" type="password" required autocomplete="<?= $setup ? 'new-password' : 'current-password' ?>" <?= $setup ? 'minlength="8"' : '' ?>></label>
+      <?php if ($setup): ?><label>Repita a senha<input name="pass2" type="password" required minlength="8" autocomplete="new-password"></label><?php endif; ?>
+      <button class="btn primary block"><?= $setup ? 'Criar e entrar' : 'Entrar' ?></button>
+    </form>
+  </main>
+<?php else: ?>
+  <header class="top">
+    <a class="brand" href="./"><img src="<?= h($s['logo'] ? img_url($s['logo']) : '../icons/icon.svg') ?>" alt=""><span><?= h($s['title']) ?></span></a>
+    <div class="top-actions">
+      <a class="btn sm" href="../" target="_blank" rel="noopener">Abrir app ↗</a>
+      <form method="post" class="inline"><?= csrf_field() ?><input type="hidden" name="action" value="logout"><button class="btn sm ghost">Sair</button></form>
+    </div>
+  </header>
+  <nav class="nav">
+    <?php foreach ($tabs as $k => $label): ?>
+      <a href="?tab=<?= $k ?>" class="<?= $k === $tab ? 'active' : '' ?>"><?= $label ?></a>
+    <?php endforeach; ?>
+  </nav>
+  <main class="content">
+    <?php if ($flash): ?><p class="alert <?= h($flash[1]) ?>"><?= h($flash[0]) ?></p><?php endif; ?>
+
+<?php
+// ======================= INÍCIO =======================
+if ($tab === 'inicio'):
+    $stats = rp_read_json(RP_STATS, []);
+    $liveAds = array_filter($cfg['ads'], fn ($a) => rp_ad_is_live($a));
+    $activeSt = array_filter($cfg['stations'], fn ($x) => !empty($x['active']));
+    $views = array_sum(array_column($stats, 'views'));
+    $clicks = array_sum(array_column($stats, 'clicks'));
+    $appUrl = ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'])), '/') . '/';
+?>
+    <h2>Visão geral</h2>
+    <div class="stats">
+      <a class="stat" href="?tab=radios"><strong><?= count($activeSt) ?></strong><span>rádios no ar<?= count($cfg['stations']) > count($activeSt) ? ' (de ' . count($cfg['stations']) . ')' : '' ?></span></a>
+      <a class="stat" href="?tab=estilos"><strong><?= count($cfg['genres']) ?></strong><span>estilos</span></a>
+      <a class="stat" href="?tab=publicidade"><strong><?= count($liveAds) ?></strong><span>anúncios no ar</span></a>
+      <a class="stat" href="?tab=publicidade"><strong><?= number_format($clicks, 0, ',', '.') ?></strong><span>cliques em anúncios · <?= number_format($views, 0, ',', '.') ?> exibições</span></a>
+    </div>
+
+    <?php if (!$cfg['stations']): ?>
+      <div class="card callout">
+        <h3>Comece cadastrando sua primeira rádio</h3>
+        <p>Você vai precisar da URL do streaming (ex.: <code>https://seuservidor.com:8000/live</code>).</p>
+        <a class="btn primary" href="?tab=radios&edit=new">+ Cadastrar rádio</a>
+      </div>
+    <?php endif; ?>
+
+    <div class="card">
+      <h3>Link do aplicativo</h3>
+      <p>Divulgue este endereço. O ouvinte pode <b>ouvir direto no navegador</b> ou <b>instalar</b> no celular (Android e iPhone) e no computador (Windows, Mac, Linux).</p>
+      <div class="copy"><input readonly value="<?= h($appUrl) ?>" onclick="this.select()"><button class="btn sm" type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value);this.textContent='Copiado!'">Copiar</button></div>
+      <?php if (!$https): ?><p class="alert warn">Para os ouvintes poderem <b>instalar</b> o app, o site precisa estar em <b>HTTPS</b>.</p><?php endif; ?>
+    </div>
+
+<?php
+// ======================= RÁDIOS =======================
+elseif ($tab === 'radios'):
+    $genreNames = array_column($cfg['genres'], 'name', 'id');
+    if ($edit !== ''):
+        $i = find_index($cfg['stations'], $edit);
+        $st = $i >= 0 ? $cfg['stations'][$i] : ['id' => '', 'name' => '', 'stream' => '', 'logo' => '', 'genre' => '', 'city' => '', 'slogan' => '', 'metadata' => '', 'active' => true];
+?>
+    <div class="head"><h2><?= $st['id'] ? 'Editar rádio' : 'Nova rádio' ?></h2><a class="btn sm ghost" href="?tab=radios">← Voltar</a></div>
+    <form method="post" enctype="multipart/form-data" class="card form">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="station_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <input type="hidden" name="id" value="<?= h($st['id']) ?>">
+      <div class="grid2">
+        <label>Nome da rádio *<input name="name" required maxlength="80" value="<?= h($st['name']) ?>" placeholder="Ex.: Rádio Gospel FM"></label>
+        <label>Estilo
+          <select name="genre">
+            <option value="">— sem estilo —</option>
+            <?php foreach ($cfg['genres'] as $g): ?><option value="<?= h($g['id']) ?>" <?= $g['id'] === $st['genre'] ? 'selected' : '' ?>><?= h($g['name']) ?></option><?php endforeach; ?>
+          </select>
+          <small><a href="?tab=estilos">Gerenciar estilos</a></small>
+        </label>
+      </div>
+      <label>URL do streaming *<input name="stream" type="url" required value="<?= h($st['stream']) ?>" placeholder="https://servidor.com:8000/live">
+        <small>Link direto do áudio (MP3/AAC) do seu servidor Shoutcast/Icecast. Use <b>https</b> para funcionar em todos os aparelhos.</small></label>
+      <div class="grid2">
+        <label>Slogan<input name="slogan" maxlength="120" value="<?= h($st['slogan']) ?>" placeholder="A rádio que toca você"></label>
+        <label>Cidade<input name="city" maxlength="80" value="<?= h($st['city']) ?>" placeholder="Goiânia - GO"></label>
+      </div>
+      <label>URL dos metadados (opcional)<input name="metadata" type="url" value="<?= h($st['metadata']) ?>" placeholder="https://servidor.com:8000/status-json.xsl">
+        <small>Para mostrar a música tocando. Icecast: <code>/status-json.xsl</code>. O servidor precisa permitir acesso (CORS).</small></label>
+      <div class="upload">
+        <?php if ($st['logo']): ?><img src="<?= h(img_url($st['logo'])) ?>" alt=""><?php endif; ?>
+        <label>Logo da rádio (quadrado, ex.: 500×500)<input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+        <?php if ($st['logo']): ?><label class="check"><input type="checkbox" name="logo_remove" value="1"> Remover logo</label><?php endif; ?>
+      </div>
+      <label class="check"><input type="checkbox" name="active" value="1" <?= !empty($st['active']) ? 'checked' : '' ?>> Rádio no ar (aparece no aplicativo)</label>
+      <div class="actions">
+        <button class="btn primary">Salvar rádio</button>
+        <?php if ($st['stream']): ?><button class="btn" type="button" id="testStream" data-src="<?= h($st['stream']) ?>">▶ Testar áudio</button><?php endif; ?>
+      </div>
+    </form>
+<?php else: ?>
+    <div class="head"><h2>Rádios</h2><a class="btn primary" href="?tab=radios&edit=new">+ Nova rádio</a></div>
+    <?php if (!$cfg['stations']): ?>
+      <p class="empty">Nenhuma rádio cadastrada.</p>
+    <?php else: ?>
+    <div class="rows">
+      <?php foreach ($cfg['stations'] as $n => $st): ?>
+      <div class="row<?= empty($st['active']) ? ' off' : '' ?>">
+        <span class="thumb"><?php if ($st['logo']): ?><img src="<?= h(img_url($st['logo'])) ?>" alt=""><?php else: ?><?= h(mb_strtoupper(mb_substr($st['name'], 0, 2))) ?><?php endif; ?></span>
+        <div class="row-main">
+          <strong><?= h($st['name']) ?></strong>
+          <small><?= h($genreNames[$st['genre']] ?? 'Sem estilo') ?> · <span class="mono"><?= h($st['stream']) ?></span></small>
+        </div>
+        <span class="badge <?= !empty($st['active']) ? 'on' : '' ?>"><?= !empty($st['active']) ? 'No ar' : 'Fora do ar' ?></span>
+        <div class="row-actions">
+          <?= action_btn('station_move', $st['id'], '↑', 'btn sm icon', ['dir' => -1]) ?>
+          <?= action_btn('station_move', $st['id'], '↓', 'btn sm icon', ['dir' => 1]) ?>
+          <?= action_btn('station_toggle', $st['id'], !empty($st['active']) ? 'Tirar do ar' : 'Colocar no ar') ?>
+          <a class="btn sm" href="?tab=radios&edit=<?= h($st['id']) ?>">Editar</a>
+          <?= action_btn('station_delete', $st['id'], 'Excluir', 'btn sm danger', [], 'Excluir a rádio "' . $st['name'] . '"?') ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <p class="hint">A ordem aqui é a ordem em que as rádios aparecem no aplicativo.</p>
+    <?php endif; ?>
+<?php endif; ?>
+
+<?php
+// ======================= ESTILOS =======================
+elseif ($tab === 'estilos'):
+    $count = array_count_values(array_column($cfg['stations'], 'genre'));
+?>
+    <div class="head"><h2>Estilos musicais</h2></div>
+    <p class="hint">Os estilos viram os filtros do aplicativo (só aparecem os que têm alguma rádio no ar).</p>
+    <form method="post" class="card add-inline">
+      <?= csrf_field() ?><input type="hidden" name="action" value="genre_add"><input type="hidden" name="back" value="<?= $back ?>">
+      <input name="name" required maxlength="40" placeholder="Novo estilo (ex.: Pagode)">
+      <button class="btn primary">Adicionar</button>
+    </form>
+    <div class="rows">
+      <?php foreach ($cfg['genres'] as $g): ?>
+      <div class="row">
+        <form method="post" class="row-main rename">
+          <?= csrf_field() ?><input type="hidden" name="action" value="genre_rename"><input type="hidden" name="id" value="<?= h($g['id']) ?>"><input type="hidden" name="back" value="<?= $back ?>">
+          <input name="name" value="<?= h($g['name']) ?>" maxlength="40" required aria-label="Nome do estilo">
+          <button class="btn sm">Renomear</button>
+        </form>
+        <span class="badge"><?= (int) ($count[$g['id']] ?? 0) ?> rádio(s)</span>
+        <div class="row-actions">
+          <?= action_btn('genre_move', $g['id'], '↑', 'btn sm icon', ['dir' => -1]) ?>
+          <?= action_btn('genre_move', $g['id'], '↓', 'btn sm icon', ['dir' => 1]) ?>
+          <?= action_btn('genre_delete', $g['id'], 'Excluir', 'btn sm danger', [], 'Excluir o estilo "' . $g['name'] . '"?') ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+
+<?php
+// ======================= PUBLICIDADE =======================
+elseif ($tab === 'publicidade'):
+    $stats = rp_read_json(RP_STATS, []);
+    if ($edit !== ''):
+        $i = find_index($cfg['ads'], $edit);
+        $ad = $i >= 0 ? $cfg['ads'][$i] : ['id' => '', 'title' => '', 'text' => '', 'image' => '', 'link' => '', 'position' => (string) ($_GET['pos'] ?? 'top'), 'starts' => '', 'ends' => '', 'active' => true];
+?>
+    <div class="head"><h2><?= $ad['id'] ? 'Editar publicidade' : 'Nova publicidade' ?></h2><a class="btn sm ghost" href="?tab=publicidade">← Voltar</a></div>
+    <form method="post" enctype="multipart/form-data" class="card form">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="ad_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <input type="hidden" name="id" value="<?= h($ad['id']) ?>">
+      <fieldset class="positions">
+        <legend>Onde vai aparecer *</legend>
+        <?php foreach (AD_POSITIONS as $k => $label): ?>
+          <label class="pos"><input type="radio" name="position" value="<?= $k ?>" <?= $ad['position'] === $k ? 'checked' : '' ?> required>
+            <span><b><?= h($label) ?></b><small><?= ['top' => 'Imagem 1200×300 (4:1). Gira entre os anúncios.', 'player' => 'Imagem 1200×200 (6:1). Aparece enquanto ouvem.', 'popup' => 'Imagem 1080×1080 ou 1080×1350. Uma vez por visita.'][$k] ?></small></span></label>
+        <?php endforeach; ?>
+      </fieldset>
+      <div class="upload">
+        <?php if ($ad['image']): ?><img src="<?= h(img_url($ad['image'])) ?>" alt="" class="wide"><?php endif; ?>
+        <label>Imagem do anúncio<input type="file" name="image_file" accept="image/png,image/jpeg,image/webp,image/gif"><small>JPG, PNG, WEBP ou GIF (até 4 MB).</small></label>
+        <?php if ($ad['image']): ?><label class="check"><input type="checkbox" name="image_remove" value="1"> Remover imagem</label><?php endif; ?>
+      </div>
+      <div class="grid2">
+        <label>Título / anunciante<input name="title" maxlength="80" value="<?= h($ad['title']) ?>" placeholder="Ex.: Supermercado Bom Preço"><small>Sem imagem, o anúncio aparece como texto.</small></label>
+        <label>Link ao tocar<input name="link" value="<?= h($ad['link']) ?>" placeholder="https://… ou número de WhatsApp"></label>
+      </div>
+      <label>Texto curto (opcional)<input name="text" maxlength="160" value="<?= h($ad['text']) ?>" placeholder="Ofertas toda semana! Peça pelo WhatsApp."></label>
+      <div class="grid2">
+        <label>Começa em<input type="date" name="starts" value="<?= h($ad['starts']) ?>"></label>
+        <label>Termina em<input type="date" name="ends" value="<?= h($ad['ends']) ?>"><small>Deixe em branco para não expirar.</small></label>
+      </div>
+      <label class="check"><input type="checkbox" name="active" value="1" <?= !empty($ad['active']) ? 'checked' : '' ?>> Ativo</label>
+      <div class="actions"><button class="btn primary">Salvar publicidade</button></div>
+    </form>
+<?php else: ?>
+    <div class="head"><h2>Publicidade</h2><a class="btn primary" href="?tab=publicidade&edit=new">+ Nova publicidade</a></div>
+    <?php foreach (AD_POSITIONS as $pos => $label):
+        $list = array_filter($cfg['ads'], fn ($a) => ($a['position'] ?? '') === $pos); ?>
+      <h3 class="section"><?= h($label) ?> <a class="btn sm" href="?tab=publicidade&edit=new&pos=<?= $pos ?>">+ Adicionar</a></h3>
+      <?php if (!$list): ?><p class="empty sm">Nenhum anúncio neste espaço.</p><?php endif; ?>
+      <div class="rows">
+        <?php foreach ($list as $ad):
+            $live = rp_ad_is_live($ad);
+            $v = (int) ($stats[$ad['id']]['views'] ?? 0);
+            $c = (int) ($stats[$ad['id']]['clicks'] ?? 0);
+            $status = $live ? 'No ar' : (empty($ad['active']) ? 'Pausado' : ((!empty($ad['ends']) && $ad['ends'] < date('Y-m-d')) ? 'Expirado' : 'Agendado'));
+        ?>
+        <div class="row<?= $live ? '' : ' off' ?>">
+          <span class="thumb wide"><?php if ($ad['image']): ?><img src="<?= h(img_url($ad['image'])) ?>" alt=""><?php else: ?>Texto<?php endif; ?></span>
+          <div class="row-main">
+            <strong><?= h($ad['title'] ?: 'Sem título') ?></strong>
+            <small><?= $ad['starts'] || $ad['ends'] ? h(($ad['starts'] ? date('d/m/Y', strtotime($ad['starts'])) : '…') . ' até ' . ($ad['ends'] ? date('d/m/Y', strtotime($ad['ends'])) : 'sem fim')) . ' · ' : '' ?>
+              <?= number_format($v, 0, ',', '.') ?> exibições · <?= number_format($c, 0, ',', '.') ?> cliques<?= $v ? ' · ' . number_format($c / $v * 100, 1, ',', '.') . '%' : '' ?></small>
+          </div>
+          <span class="badge <?= $live ? 'on' : '' ?>"><?= $status ?></span>
+          <div class="row-actions">
+            <?= action_btn('ad_move', $ad['id'], '↑', 'btn sm icon', ['dir' => -1]) ?>
+            <?= action_btn('ad_move', $ad['id'], '↓', 'btn sm icon', ['dir' => 1]) ?>
+            <?= action_btn('ad_toggle', $ad['id'], !empty($ad['active']) ? 'Pausar' : 'Ativar') ?>
+            <a class="btn sm" href="?tab=publicidade&edit=<?= h($ad['id']) ?>">Editar</a>
+            <?= action_btn('ad_reset', $ad['id'], 'Zerar', 'btn sm ghost', [], 'Zerar exibições e cliques deste anúncio?') ?>
+            <?= action_btn('ad_delete', $ad['id'], 'Excluir', 'btn sm danger', [], 'Excluir este anúncio?') ?>
+          </div>
+        </div>
+        <?php endforeach; ?>
+      </div>
+    <?php endforeach; ?>
+<?php endif; ?>
+
+<?php
+// ======================= APARÊNCIA =======================
+elseif ($tab === 'aparencia'):
+?>
+    <div class="head"><h2>Aparência e contatos</h2></div>
+    <form method="post" enctype="multipart/form-data" class="card form">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="settings_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <h3>Identidade</h3>
+      <div class="grid2">
+        <label>Nome do aplicativo *<input name="title" required maxlength="60" value="<?= h($s['title']) ?>"></label>
+        <label>Nome curto (abaixo do ícone)<input name="short_name" maxlength="20" value="<?= h($s['short_name']) ?>" placeholder="Até 12 letras de preferência"></label>
+      </div>
+      <label>Descrição<input name="description" maxlength="160" value="<?= h($s['description']) ?>"></label>
+      <div class="grid2">
+        <label>Cor principal<span class="color"><input type="color" name="accent" value="<?= h($s['accent']) ?>"><code><?= h($s['accent']) ?></code></span></label>
+        <div class="upload">
+          <?php if ($s['logo']): ?><img src="<?= h(img_url($s['logo'])) ?>" alt=""><?php endif; ?>
+          <label>Logo / ícone do app (quadrado, 512×512 ou maior)<input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp"></label>
+          <?php if ($s['logo']): ?><label class="check"><input type="checkbox" name="logo_remove" value="1"> Voltar ao ícone padrão</label><?php endif; ?>
+        </div>
+      </div>
+      <label>Sobre a rádio (aparece no fim do app)<textarea name="about" rows="3" maxlength="1000"><?= h($s['about']) ?></textarea></label>
+
+      <h3>Contatos e redes sociais</h3>
+      <div class="grid2">
+        <label>WhatsApp<input name="whatsapp" value="<?= h($s['whatsapp']) ?>" placeholder="(62) 99999-0000"></label>
+        <label>Instagram<input name="instagram" value="<?= h($s['instagram']) ?>" placeholder="@suaradio"></label>
+        <label>Facebook<input name="facebook" value="<?= h($s['facebook']) ?>" placeholder="suaradio ou link"></label>
+        <label>YouTube<input name="youtube" value="<?= h($s['youtube']) ?>" placeholder="@suaradio ou link"></label>
+        <label>Site<input name="site" value="<?= h($s['site']) ?>" placeholder="https://suaradio.com.br"></label>
+      </div>
+
+      <h3>Publicidade</h3>
+      <div class="grid2">
+        <label>Trocar banner a cada (segundos)<input type="number" name="ad_rotate" min="3" max="60" value="<?= (int) $s['ad_rotate'] ?>"></label>
+        <label>Popup aparece após (segundos)<input type="number" name="popup_delay" min="0" max="60" value="<?= (int) $s['popup_delay'] ?>"></label>
+      </div>
+      <div class="actions"><button class="btn primary">Salvar aparência</button></div>
+    </form>
+
+<?php
+// ======================= CONTA =======================
+else:
+?>
+    <div class="head"><h2>Conta de acesso</h2></div>
+    <form method="post" class="card form narrow">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="password">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <label>Usuário<input name="user" value="<?= h($admin['user']) ?>" maxlength="60" autocomplete="username"></label>
+      <label>Senha atual<input type="password" name="current" required autocomplete="current-password"></label>
+      <label>Nova senha<input type="password" name="pass" required minlength="8" autocomplete="new-password"></label>
+      <label>Repita a nova senha<input type="password" name="pass2" required minlength="8" autocomplete="new-password"></label>
+      <div class="actions"><button class="btn primary">Atualizar acesso</button></div>
+    </form>
+<?php endif; ?>
+  </main>
+<?php endif; ?>
+<script>
+  // Mostra o nome do arquivo escolhido e a prévia da imagem antes de salvar.
+  document.querySelectorAll('input[type=file]').forEach((input) => input.addEventListener('change', () => {
+    const f = input.files[0];
+    const box = input.closest('.upload');
+    if (!f || !box) return;
+    let img = box.querySelector('img');
+    if (!img) { img = document.createElement('img'); box.prepend(img); }
+    img.src = URL.createObjectURL(f);
+  }));
+  document.querySelectorAll('input[type=color]').forEach((c) => c.addEventListener('input', () => { c.nextElementSibling.textContent = c.value; }));
+  const t = document.getElementById('testStream');
+  if (t) {
+    let a = null;
+    t.addEventListener('click', () => {
+      if (a) { a.pause(); a = null; t.textContent = '▶ Testar áudio'; return; }
+      const src = t.closest('form').querySelector('[name=stream]').value || t.dataset.src;
+      a = new Audio(src);
+      t.textContent = 'Conectando…';
+      a.addEventListener('playing', () => { t.textContent = '■ Parar (tocando)'; });
+      a.play().catch(() => { t.textContent = '✕ Não tocou — verifique a URL'; a = null; });
+    });
+  }
+</script>
+</body>
+</html>
