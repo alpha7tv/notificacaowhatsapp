@@ -43,7 +43,114 @@ if (rp_client_state($client) !== 'active') {
 }
 rp_use_tenant($slug);
 
-if (($_GET['action'] ?? '') === 'track') {
+$action = (string) ($_GET['action'] ?? '');
+$isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
+$in = $isPost ? ($_POST ?: (json_decode((string) file_get_contents('php://input'), true) ?: [])) : $_GET;
+
+// ----- Pedidos de música / oração -----
+if ($action === 'request' && $isPost) {
+    $s = rp_config()['settings'];
+    $type = ($in['type'] ?? '') === 'prayer' ? 'prayer' : 'music';
+    if (empty($s[$type === 'prayer' ? 'req_prayer' : 'req_music'])) {
+        api_out(['error' => 'Recurso desativado.'], 403);
+    }
+    $device = rp_device($in['device'] ?? '');
+    $name = rp_clean($in['name'] ?? '', 40);
+    $text = rp_clean_text($in['text'] ?? '', 500);
+    $song = rp_clean($in['song'] ?? '', 120);
+    if ($name === '' || ($type === 'prayer' ? $text === '' : $text === '' && $song === '')) {
+        api_out(['error' => $type === 'prayer' ? 'Preencha seu nome e o pedido de oração.' : 'Preencha seu nome e a música.'], 422);
+    }
+    if (rp_is_banned($device)) {
+        api_out(['error' => 'Envio bloqueado.'], 403);
+    }
+    // Por aparelho: 1 pedido a cada 30 s. Por IP (vários celulares podem dividir o mesmo IP): até 20 por minuto.
+    if (($device && !rp_rate_ok('reqd:' . $device, 30)) || !rp_rate_count('reqi:' . rp_ip_hash(), 20, 60)) {
+        api_out(['error' => 'Aguarde alguns segundos antes de enviar outro pedido.'], 429);
+    }
+    $req = rp_locked(function () use ($type, $device, $name, $text, $song, $in) {
+        $all = rp_read_json(rp_tfile('requests'), ['last' => 0, 'items' => []]);
+        $req = [
+            'id' => ++$all['last'],
+            'type' => $type,
+            'name' => $name,
+            'city' => rp_clean($in['city'] ?? '', 60),
+            'phone' => rp_clean($in['phone'] ?? '', 30),
+            'song' => $type === 'music' ? $song : '',
+            'text' => $text,
+            'device' => $device,
+            'ip' => rp_ip_hash(),
+            'at' => time(),
+            'status' => 'new',
+            'reply' => '',
+            'reply_at' => 0,
+        ];
+        $all['items'][] = $req;
+        $all['items'] = array_slice($all['items'], -1000);
+        rp_write_atomic(rp_tfile('requests'), json_encode($all, JSON_UNESCAPED_UNICODE));
+        return $req;
+    });
+    $s = rp_config()['settings'];
+    if ($type === 'music' && !empty($s['chat']) && !empty($s['chat_announce'])) {
+        rp_chat_add(['kind' => 'system', 'nick' => $name, 'text' => 'pediu ' . ($req['song'] !== '' ? '"' . $req['song'] . '"' : 'uma música'), 'device' => $device]);
+    }
+    api_out(['ok' => true, 'id' => $req['id']]);
+}
+
+// Pedidos deste aparelho, com as respostas do locutor.
+if ($action === 'my_requests') {
+    $device = rp_device($in['device'] ?? '');
+    $out = [];
+    if ($device !== '') {
+        foreach (array_reverse(rp_read_json(rp_tfile('requests'), ['items' => []])['items']) as $r) {
+            if ($r['device'] === $device) {
+                $out[] = ['id' => $r['id'], 'type' => $r['type'], 'song' => $r['song'], 'text' => $r['text'], 'at' => $r['at'], 'reply' => $r['reply'], 'reply_at' => $r['reply_at']];
+                if (count($out) >= 20) {
+                    break;
+                }
+            }
+        }
+    }
+    api_out(['items' => $out]);
+}
+
+// ----- Chat dos ouvintes -----
+if ($action === 'chat' || $action === 'chat_send') {
+    $s = rp_config()['settings'];
+    if (empty($s['chat'])) {
+        api_out(['error' => 'O chat está desativado.', 'enabled' => false], 403);
+    }
+    $device = rp_device($in['device'] ?? '');
+    $nick = rp_clean($in['nick'] ?? '', 24);
+    if ($action === 'chat_send') {
+        if (!$isPost || $device === '' || $nick === '') {
+            api_out(['error' => 'Escolha um apelido para conversar.'], 422);
+        }
+        $text = rp_clean($in['text'] ?? '', 300);
+        if ($text === '') {
+            api_out(['error' => 'Mensagem vazia.'], 422);
+        }
+        if (rp_is_banned($device)) {
+            api_out(['error' => 'Você foi bloqueado neste chat.'], 403);
+        }
+        if (!rp_rate_ok('chat:' . $device, 2) || !rp_rate_count('chati:' . rp_ip_hash(), 60, 60)) {
+            api_out(['error' => 'Calma! Espere um instante para mandar outra mensagem.'], 429);
+        }
+        $msg = rp_chat_add(['kind' => 'user', 'nick' => $nick, 'text' => $text, 'device' => $device]);
+        rp_presence($device, $nick);
+        api_out(['ok' => true, 'id' => $msg['id']]);
+    }
+    $since = max(0, (int) ($in['since'] ?? 0));
+    $data = rp_chat_since($since, false, $device);
+    if ($since === 0) {
+        $data['messages'] = array_slice($data['messages'], -60);
+    }
+    $data['online'] = rp_presence($device ?: null, $nick !== '' ? $nick : null);
+    $data['banned'] = rp_is_banned($device);
+    api_out($data);
+}
+
+if ($action === 'track') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $in = $_POST ?: (json_decode((string) file_get_contents('php://input'), true) ?: []);
         try {
@@ -126,6 +233,7 @@ $out = [
         'youtube' => rp_social_link($s['youtube'], 'https://youtube.com/@'),
         'site' => rp_url($s['site']),
     ]),
+    'interact' => ['music' => !empty($s['req_music']), 'prayer' => !empty($s['req_prayer']), 'chat' => !empty($s['chat'])],
     'ad_rotate' => max(3, (int) $s['ad_rotate']),
     'popup_delay' => max(0, (int) $s['popup_delay']),
     'genres' => array_values(array_filter(array_column($cfg['genres'], 'name'), fn ($g) => in_array($g, $used, true))),

@@ -78,6 +78,10 @@ function rp_defaults(): array
             'site' => '',
             'ad_rotate' => 8,
             'popup_delay' => 3,
+            'req_music' => true,
+            'req_prayer' => true,
+            'chat' => true,
+            'chat_announce' => true,
         ],
         'genres' => $genres,
         'stations' => [],
@@ -411,6 +415,119 @@ function rp_ad_is_live(array $ad, ?string $today = null): bool
         return false;
     }
     return !empty($ad['image']) || trim((string) ($ad['title'] ?? '')) !== '';
+}
+
+// ---------- Interação: pedidos e chat ----------
+
+function rp_tfile(string $name): string
+{
+    return rp_tenant_dir() . '/' . $name . '.json';
+}
+
+/** Identificador anônimo do aparelho do ouvinte (gerado no app). */
+function rp_device(?string $d): string
+{
+    $d = strtolower(trim((string) $d));
+    return preg_match('/^[a-f0-9]{16,40}$/', $d) ? $d : '';
+}
+
+function rp_ip_hash(): string
+{
+    return substr(hash('sha256', ($_SERVER['REMOTE_ADDR'] ?? '') . '|' . rp_tenant()), 0, 16);
+}
+
+/** Limite de frequência: false se a mesma chave agiu há menos de $seconds. */
+function rp_rate_ok(string $key, int $seconds): bool
+{
+    return rp_locked(function () use ($key, $seconds) {
+        $now = time();
+        $all = array_filter(rp_read_json(rp_tfile('ratelimit'), []), fn ($t) => $t > $now - 3600);
+        if (isset($all[$key]) && $all[$key] > $now - $seconds) {
+            return false;
+        }
+        $all[$key] = $now;
+        rp_write_atomic(rp_tfile('ratelimit'), json_encode($all));
+        return true;
+    });
+}
+
+/** Limite por volume: false se a chave já agiu $max vezes nos últimos $window segundos. */
+function rp_rate_count(string $key, int $max, int $window): bool
+{
+    return rp_locked(function () use ($key, $max, $window) {
+        $now = time();
+        $file = rp_tfile('ratecount');
+        $all = rp_read_json($file, []);
+        foreach ($all as $k => $hits) {
+            $all[$k] = array_values(array_filter($hits, fn ($t) => $t > $now - 3600));
+            if (!$all[$k]) {
+                unset($all[$k]);
+            }
+        }
+        $recent = array_filter($all[$key] ?? [], fn ($t) => $t > $now - $window);
+        if (count($recent) >= $max) {
+            return false;
+        }
+        $all[$key][] = $now;
+        rp_write_atomic($file, json_encode($all));
+        return true;
+    });
+}
+
+function rp_is_banned(string $device): bool
+{
+    $bans = rp_read_json(rp_tfile('bans'), []);
+    return ($device !== '' && isset($bans['d:' . $device])) || isset($bans['i:' . rp_ip_hash()]);
+}
+
+/** Adiciona uma mensagem ao chat (mantém as últimas 300). */
+function rp_chat_add(array $msg): array
+{
+    return rp_locked(function () use ($msg) {
+        $chat = rp_read_json(rp_tfile('chat'), ['last' => 0, 'messages' => []]);
+        $msg['id'] = ++$chat['last'];
+        $msg['at'] = time();
+        $chat['messages'][] = $msg;
+        $chat['messages'] = array_slice($chat['messages'], -300);
+        rp_write_atomic(rp_tfile('chat'), json_encode($chat, JSON_UNESCAPED_UNICODE));
+        return $msg;
+    });
+}
+
+/** Mensagens visíveis do chat a partir de um id (sem dados internos de quem enviou). */
+function rp_chat_since(int $since, bool $admin = false, string $viewer = ''): array
+{
+    $chat = rp_read_json(rp_tfile('chat'), ['last' => 0, 'messages' => []]);
+    $out = [];
+    foreach ($chat['messages'] as $m) {
+        if ($m['id'] <= $since) {
+            continue;
+        }
+        $row = ['id' => $m['id'], 'nick' => $m['nick'], 'text' => $m['text'], 'at' => $m['at'], 'kind' => $m['kind'] ?? 'user'];
+        if ($admin) {
+            $row['device'] = $m['device'] ?? '';
+        } else {
+            $row['mine'] = $viewer !== '' && ($m['device'] ?? '') === $viewer;
+        }
+        $out[] = $row;
+    }
+    return ['last' => $chat['last'], 'messages' => $out, 'deleted' => $chat['deleted'] ?? []];
+}
+
+/** Ouvintes vistos no chat nos últimos 2 minutos. */
+function rp_presence(?string $device = null, ?string $nick = null): array
+{
+    $file = rp_tfile('presence');
+    $now = time();
+    $all = array_filter(rp_read_json($file, []), fn ($p) => $p[1] > $now - 120);
+    if ($device && $nick !== null && (!isset($all[$device]) || $all[$device][1] < $now - 25 || $all[$device][0] !== $nick)) {
+        rp_locked(function () use ($file, $device, $nick, $now, &$all) {
+            $all = array_filter(rp_read_json($file, []), fn ($p) => $p[1] > $now - 120);
+            $all[$device] = [$nick, $now];
+            rp_write_atomic($file, json_encode($all, JSON_UNESCAPED_UNICODE));
+        });
+    }
+    return array_values(array_unique(array_map(fn ($p) => $p[0], $all)));
 }
 
 // ---------- Web TV ----------

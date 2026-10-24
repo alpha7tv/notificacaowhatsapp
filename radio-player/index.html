@@ -33,6 +33,10 @@
     <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 2l5 5-1.4 1.4L13 5.8V15h-2V5.8L8.4 8.4 7 7zM5 11h3v2H6v7h12v-7h-2v-2h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/></symbol>
     <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4 8h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm3.5 3.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM14 12v1.5h5V12zm0 3v1.5h5V15zM16.6 2.4l.8 1.8L7.9 8H5.3z"/></symbol>
     <symbol id="i-tv" viewBox="0 0 24 24"><path d="M4 6h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm0 2v9h16V8zm4.3-5.7L12 5.6l3.7-3.3 1.3 1.5L13.6 7h-3.2L7 3.8zM8 21h8v1H8z"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 4.5 20 2v13.5a3.5 3.5 0 1 1-2-3.16V6.5L11 8v9.5A3.5 3.5 0 1 1 9 14.34z"/></symbol>
+    <symbol id="i-pray" viewBox="0 0 24 24"><path d="M11 2.5c.55 0 1 .45 1 1V13l-1.6 1.6-.4-1.8V7.2L6.3 12.6a2 2 0 0 0-.3 1.05V17l-3 3-1.4-1.4L4 16.2v-2.55a4 4 0 0 1 .6-2.1L10 3a1 1 0 0 1 1-.5zm2 0a1 1 0 0 1 1 .5l5.4 8.55a4 4 0 0 1 .6 2.1v2.55l2.4 2.4L21 20l-3-3v-3.35a2 2 0 0 0-.3-1.05L14 7.2v5.6l-.4 1.8L12 13V3.5c0-.55.45-1 1-1z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H8.4L4 21.5V18a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v11h2v1.4L7.7 16H20V5zm3 3h10v2H7zm0 3h7v2H7z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M3 20.5 21.5 12 3 3.5 3 10l13 2-13 2z"/></symbol>
     <symbol id="i-install" viewBox="0 0 24 24"><path d="M11 3h2v9.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></symbol>
     <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2c-1.5 0-3-.4-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.4.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1 2.7c.1.2 1.8 2.8 4.4 3.9 1.6.7 2.3.8 3.1.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2 0-.1-.2-.2-.4-.3z"/></symbol>
@@ -70,6 +74,8 @@
     <div class="genres" id="genres" aria-label="Estilos"></div>
 
     <aside class="ad-slot ad-top" id="adTop" aria-label="Publicidade" hidden></aside>
+
+    <div class="interact home" id="homeInteract" hidden></div>
 
     <main class="list" id="list" aria-live="polite"></main>
 
@@ -128,6 +134,8 @@
         <button class="icon-btn side" id="shareBtn" aria-label="Compartilhar"><svg><use href="#i-share"/></svg></button>
       </div>
 
+      <div class="interact" id="playerInteract" hidden></div>
+
       <div class="player-social" id="playerSocial" hidden></div>
 
       <aside class="ad-slot ad-player" id="adPlayer" aria-label="Publicidade" hidden></aside>
@@ -155,6 +163,47 @@
         <h3>Outros canais</h3>
         <div class="tv-more" id="tvMore"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- Pedido de música / oração -->
+  <dialog id="reqDialog" class="req-dialog">
+    <form id="reqForm" novalidate>
+      <h3 id="reqTitle">Pedir música</h3>
+      <label>Seu nome<input name="name" id="reqName" required maxlength="40" autocomplete="name"></label>
+      <label id="reqSongWrap">Música e artista<input name="song" id="reqSong" maxlength="120" placeholder="Ex.: Raridade — Anderson Freire"></label>
+      <label><span id="reqTextLabel">Recado (opcional)</span><textarea name="text" id="reqText" maxlength="500" rows="3"></textarea></label>
+      <div class="two">
+        <label>Cidade<input name="city" id="reqCity" maxlength="60" autocomplete="address-level2"></label>
+        <label>WhatsApp (opcional)<input name="phone" id="reqPhone" maxlength="30" inputmode="tel" autocomplete="tel"></label>
+      </div>
+      <p class="form-msg" id="reqMsg" role="alert"></p>
+      <div class="dlg-actions">
+        <button type="button" class="btn-ghost" id="reqCancel">Cancelar</button>
+        <button class="btn-primary" id="reqSubmit">Enviar pedido</button>
+      </div>
+      <div class="my-reqs" id="myReqs" hidden></div>
+    </form>
+  </dialog>
+
+  <!-- Chat dos ouvintes -->
+  <section class="chatscreen" id="chatScreen" aria-hidden="true" aria-label="Chat dos ouvintes">
+    <div class="chat-inner">
+      <div class="player-top">
+        <button class="icon-btn glass" id="closeChat" aria-label="Fechar chat"><svg><use href="#i-down"/></svg></button>
+        <span class="status" id="chatTitle">Chat</span>
+        <span class="chat-online" id="chatOnline">0 online</span>
+      </div>
+      <div class="online-list" id="onlineList"></div>
+      <div class="chat-log" id="chatLog" aria-live="polite"></div>
+      <form class="chat-join" id="chatJoin">
+        <p>Escolha um apelido para conversar com os outros ouvintes.</p>
+        <div class="chat-row"><input id="chatNick" maxlength="24" placeholder="Seu apelido" required autocomplete="nickname"><button class="btn-primary">Entrar</button></div>
+      </form>
+      <form class="chat-form" id="chatForm" hidden>
+        <input id="chatInput" maxlength="300" placeholder="Escreva uma mensagem…" autocomplete="off" aria-label="Mensagem">
+        <button class="play sm" aria-label="Enviar"><svg><use href="#i-send"/></svg></button>
+      </form>
     </div>
   </section>
 

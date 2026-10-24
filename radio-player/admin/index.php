@@ -172,6 +172,37 @@ $client = $tenant !== null ? $clients[$tenant] : null;
 // Clientes antigos (sem a opção) têm a Web TV liberada.
 $tvAllowed = $client !== null && ($client['allow_tv'] ?? true);
 $fatal = null;
+
+function json_out(array $data, int $code = 200): never
+{
+    http_response_code($code);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+function unread_requests(): array
+{
+    $items = rp_read_json(rp_tfile('requests'), ['items' => []])['items'];
+    $new = array_filter($items, fn ($r) => $r['status'] === 'new');
+    return ['unread' => count($new), 'last' => $items ? end($items)['id'] : 0,
+        'latest' => $new ? array_map(fn ($r) => ['type' => $r['type'], 'name' => $r['name'], 'text' => $r['song'] ?: mb_substr($r['text'], 0, 80)], array_slice(array_values($new), -3)) : []];
+}
+
+if (isset($_GET['ajax'])) {
+    if (!$logged || $tenant === null) {
+        json_out(['error' => 'login'], 401);
+    }
+    if ($_GET['ajax'] === 'poll') {
+        json_out(unread_requests());
+    }
+    if ($_GET['ajax'] === 'chat') {
+        $data = rp_chat_since(max(0, (int) ($_GET['since'] ?? 0)), true);
+        $data['online'] = rp_presence();
+        json_out($data);
+    }
+    json_out(['error' => 'ação desconhecida'], 400);
+}
 try {
     rp_ensure_dirs();
 } catch (RuntimeException $e) {
@@ -551,6 +582,136 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                 });
                 go('tab=tv');
 
+            // ----- Pedidos -----
+            case 'req_reply':
+            case 'req_read':
+            case 'req_unread':
+            case 'req_delete':
+                $rid = (int) ($_POST['id'] ?? 0);
+                $reply = rp_clean_text($_POST['reply'] ?? '', 500);
+                if ($action === 'req_reply' && $reply === '') {
+                    throw new RuntimeException('Escreva a resposta.');
+                }
+                rp_locked(function () use ($action, $rid, $reply) {
+                    $all = rp_read_json(rp_tfile('requests'), ['last' => 0, 'items' => []]);
+                    foreach ($all['items'] as $k => &$r) {
+                        if ($r['id'] !== $rid) {
+                            continue;
+                        }
+                        if ($action === 'req_delete') {
+                            unset($all['items'][$k]);
+                        } elseif ($action === 'req_reply') {
+                            $r['reply'] = $reply;
+                            $r['reply_at'] = time();
+                            $r['status'] = 'answered';
+                        } else {
+                            $r['status'] = $action === 'req_read' ? 'read' : 'new';
+                        }
+                        break;
+                    }
+                    unset($r);
+                    $all['items'] = array_values($all['items']);
+                    rp_write_atomic(rp_tfile('requests'), json_encode($all, JSON_UNESCAPED_UNICODE));
+                });
+                if (!empty($_POST['ajax'])) {
+                    json_out(['ok' => true] + unread_requests());
+                }
+                flash(['req_reply' => 'Resposta enviada. O ouvinte vê no app.', 'req_delete' => 'Pedido excluído.'][$action] ?? 'Pedido atualizado.');
+                go($back);
+
+            case 'req_read_all':
+            case 'req_clear':
+                rp_locked(function () use ($action) {
+                    $all = rp_read_json(rp_tfile('requests'), ['last' => 0, 'items' => []]);
+                    if ($action === 'req_clear') {
+                        $all['items'] = array_values(array_filter($all['items'], fn ($r) => $r['status'] === 'new'));
+                    } else {
+                        foreach ($all['items'] as &$r) {
+                            if ($r['status'] === 'new') {
+                                $r['status'] = 'read';
+                            }
+                        }
+                        unset($r);
+                    }
+                    rp_write_atomic(rp_tfile('requests'), json_encode($all, JSON_UNESCAPED_UNICODE));
+                });
+                flash($action === 'req_clear' ? 'Pedidos lidos e respondidos apagados.' : 'Todos marcados como lidos.');
+                go($back);
+
+            case 'interact_save':
+                rp_update_config(function ($cfg) {
+                    foreach (['req_music', 'req_prayer', 'chat', 'chat_announce'] as $k) {
+                        $cfg['settings'][$k] = !empty($_POST[$k]);
+                    }
+                    return $cfg;
+                });
+                flash('Configurações de interação salvas.');
+                go($back);
+
+            // ----- Chat (moderação) -----
+            case 'chat_send':
+                $text = rp_clean($_POST['text'] ?? '', 300);
+                $nick = rp_clean($_POST['nick'] ?? '', 24) ?: 'Locutor';
+                if ($text === '') {
+                    json_out(['error' => 'Mensagem vazia.'], 422);
+                }
+                $msg = rp_chat_add(['kind' => 'host', 'nick' => $nick, 'text' => $text, 'device' => '']);
+                json_out(['ok' => true, 'id' => $msg['id']]);
+
+            case 'chat_delete':
+                $mid = (int) ($_POST['id'] ?? 0);
+                rp_locked(function () use ($mid) {
+                    $chat = rp_read_json(rp_tfile('chat'), ['last' => 0, 'messages' => []]);
+                    $chat['messages'] = array_values(array_filter($chat['messages'], fn ($m) => $m['id'] !== $mid));
+                    $chat['deleted'] = array_slice([...($chat['deleted'] ?? []), $mid], -200);
+                    rp_write_atomic(rp_tfile('chat'), json_encode($chat, JSON_UNESCAPED_UNICODE));
+                });
+                json_out(['ok' => true]);
+
+            case 'chat_ban':
+                $mid = (int) ($_POST['id'] ?? 0);
+                $chat = rp_read_json(rp_tfile('chat'), ['messages' => []]);
+                $target = null;
+                foreach ($chat['messages'] as $m) {
+                    if ($m['id'] === $mid) {
+                        $target = $m;
+                    }
+                }
+                if (!$target || empty($target['device'])) {
+                    json_out(['error' => 'Não foi possível bloquear este autor.'], 422);
+                }
+                rp_locked(function () use ($target) {
+                    $bans = rp_read_json(rp_tfile('bans'), []);
+                    $bans['d:' . $target['device']] = ['nick' => $target['nick'], 'at' => time()];
+                    rp_write_atomic(rp_tfile('bans'), json_encode($bans, JSON_UNESCAPED_UNICODE));
+                    // Some com as mensagens de quem foi bloqueado.
+                    $chat = rp_read_json(rp_tfile('chat'), ['last' => 0, 'messages' => []]);
+                    $gone = array_column(array_filter($chat['messages'], fn ($m) => ($m['device'] ?? '') === $target['device']), 'id');
+                    $chat['messages'] = array_values(array_filter($chat['messages'], fn ($m) => ($m['device'] ?? '') !== $target['device']));
+                    $chat['deleted'] = array_slice([...($chat['deleted'] ?? []), ...$gone], -200);
+                    rp_write_atomic(rp_tfile('chat'), json_encode($chat, JSON_UNESCAPED_UNICODE));
+                });
+                json_out(['ok' => true]);
+
+            case 'chat_unban':
+                rp_locked(function () {
+                    $bans = rp_read_json(rp_tfile('bans'), []);
+                    unset($bans[(string) ($_POST['id'] ?? '')]);
+                    rp_write_atomic(rp_tfile('bans'), json_encode($bans, JSON_UNESCAPED_UNICODE));
+                });
+                flash('Ouvinte desbloqueado.');
+                go('tab=chat');
+
+            case 'chat_clear':
+                rp_locked(function () {
+                    $chat = rp_read_json(rp_tfile('chat'), ['last' => 0, 'messages' => []]);
+                    $chat['deleted'] = array_slice([...($chat['deleted'] ?? []), ...array_column($chat['messages'], 'id')], -300);
+                    $chat['messages'] = [];
+                    rp_write_atomic(rp_tfile('chat'), json_encode($chat, JSON_UNESCAPED_UNICODE));
+                });
+                flash('Conversa apagada.');
+                go('tab=chat');
+
             // ----- Estilos -----
             case 'genre_add':
                 $name = rp_clean($_POST['name'] ?? '', 40);
@@ -799,6 +960,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
         }
         go($back);
     } catch (RuntimeException $e) {
+        if (!empty($_POST['ajax'])) {
+            json_out(['error' => $e->getMessage()], 422);
+        }
         flash($e->getMessage(), 'err');
         go($back);
     }
@@ -821,7 +985,7 @@ if ($tenant !== null) {
     if ($tvAllowed) {
         $tabs['tv'] = 'Web TV';
     }
-    $tabs += ['estilos' => 'Estilos', 'publicidade' => 'Publicidade', 'aparencia' => 'Aparência'];
+    $tabs += ['pedidos' => 'Pedidos', 'chat' => 'Chat', 'estilos' => 'Estilos', 'publicidade' => 'Publicidade', 'aparencia' => 'Aparência'];
     if ($role === 'client') {
         $tabs['conta'] = 'Senha';
     }
@@ -890,7 +1054,7 @@ function action_btn(string $action, string $id, string $label, string $class = '
   </header>
   <nav class="nav">
     <?php foreach ($tabs as $k => $label): ?>
-      <a href="?tab=<?= $k ?>" class="<?= $k === $tab ? 'active' : '' ?>"><?= $label ?></a>
+      <a href="?tab=<?= $k ?>" class="<?= $k === $tab ? 'active' : '' ?>"><?= $label ?><?php if ($k === 'pedidos'): $un = unread_requests()['unread']; ?><span class="count" id="reqCount"<?= $un ? '' : ' hidden' ?>><?= $un ?></span><?php endif; ?></a>
     <?php endforeach; ?>
   </nav>
   <main class="content">
@@ -928,6 +1092,7 @@ if ($tab === 'inicio'):
     <div class="stats">
       <a class="stat" href="?tab=radios"><strong><?= count($activeSt) ?></strong><span>rádios no ar<?= count($cfg['stations']) > count($activeSt) ? ' (de ' . count($cfg['stations']) . ')' : '' ?></span></a>
       <?php if ($tvAllowed): ?><a class="stat" href="?tab=tv"><strong><?= count(array_filter($cfg['tvs'], fn ($x) => !empty($x['active']))) ?></strong><span>canais de TV no ar</span></a><?php endif; ?>
+      <a class="stat" href="?tab=pedidos&f=new"><strong><?= unread_requests()['unread'] ?></strong><span>pedidos não lidos</span></a>
       <a class="stat" href="?tab=estilos"><strong><?= count($cfg['genres']) ?></strong><span>estilos</span></a>
       <a class="stat" href="?tab=publicidade"><strong><?= count($liveAds) ?></strong><span>anúncios no ar</span></a>
       <a class="stat" href="?tab=publicidade"><strong><?= number_format($clicks, 0, ',', '.') ?></strong><span>cliques em anúncios · <?= number_format($views, 0, ',', '.') ?> exibições</span></a>
@@ -1096,6 +1261,118 @@ elseif ($tab === 'tv'):
     </div>
     <?php endif; ?>
 <?php endif; ?>
+
+<?php
+// ======================= PEDIDOS =======================
+elseif ($tab === 'pedidos'):
+    $filter = (string) ($_GET['f'] ?? 'all');
+    $items = array_reverse(rp_read_json(rp_tfile('requests'), ['items' => []])['items']);
+    $counts = ['all' => count($items), 'new' => 0, 'music' => 0, 'prayer' => 0];
+    foreach ($items as $r) {
+        $counts[$r['type']]++;
+        if ($r['status'] === 'new') {
+            $counts['new']++;
+        }
+    }
+    $items = array_filter($items, fn ($r) => match ($filter) {
+        'new' => $r['status'] === 'new', 'music' => $r['type'] === 'music', 'prayer' => $r['type'] === 'prayer', default => true,
+    });
+    $ago = function (int $t): string {
+        $d = time() - $t;
+        return $d < 60 ? 'agora' : ($d < 3600 ? floor($d / 60) . ' min' : ($d < 86400 ? floor($d / 3600) . ' h' : date('d/m H:i', $t)));
+    };
+?>
+    <div class="head">
+      <h2>Pedidos dos ouvintes</h2>
+      <div class="actions">
+        <button class="btn sm" type="button" id="enableNotif">🔔 Ativar avisos</button>
+        <?= action_btn('req_read_all', '', 'Marcar todos como lidos', 'btn sm', ['back' => $back]) ?>
+        <?= action_btn('req_clear', '', 'Apagar lidos', 'btn sm ghost', ['back' => $back], 'Apagar os pedidos já lidos e respondidos?') ?>
+      </div>
+    </div>
+    <p class="hint">Deixe esta tela aberta durante o programa: quando chega pedido novo, o painel toca um aviso e mostra uma notificação (clique em "Ativar avisos" uma vez).</p>
+    <nav class="filters">
+      <?php foreach (['all' => 'Todos', 'new' => 'Não lidos', 'music' => 'Músicas', 'prayer' => 'Orações'] as $k => $label): ?>
+        <a href="?tab=pedidos&f=<?= $k ?>" class="chip<?= $filter === $k ? ' active' : '' ?>"><?= $label ?> <b><?= $counts[$k] ?></b></a>
+      <?php endforeach; ?>
+    </nav>
+    <?php if (!$items): ?>
+      <p class="empty">Nenhum pedido <?= $filter === 'new' ? 'não lido' : 'ainda' ?>. Os pedidos feitos no app aparecem aqui na hora.</p>
+    <?php endif; ?>
+    <div class="reqs">
+      <?php foreach ($items as $r):
+          $wa = $r['phone'] ? rp_whatsapp_link($r['phone']) : '';
+      ?>
+      <article class="req <?= h($r['type']) ?><?= $r['status'] === 'new' ? ' is-new' : '' ?>">
+        <header>
+          <span class="req-type"><?= $r['type'] === 'prayer' ? '🙏 Oração' : '🎵 Música' ?></span>
+          <strong><?= h($r['name']) ?></strong><?php if ($r['city']): ?> <small>· <?= h($r['city']) ?></small><?php endif; ?>
+          <time><?= $ago($r['at']) ?></time>
+          <?php if ($r['status'] === 'new'): ?><span class="badge on">novo</span><?php endif; ?>
+        </header>
+        <?php if ($r['song']): ?><p class="req-song"><?= h($r['song']) ?></p><?php endif; ?>
+        <p class="req-text"><?= nl2br(h($r['text'])) ?></p>
+        <?php if ($r['reply']): ?><p class="req-reply"><b>Sua resposta:</b> <?= nl2br(h($r['reply'])) ?></p><?php endif; ?>
+        <form method="post" class="req-form">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="req_reply">
+          <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
+          <input type="hidden" name="back" value="<?= $back ?>">
+          <input name="reply" maxlength="500" placeholder="<?= $r['reply'] ? 'Mudar a resposta' : ($r['type'] === 'prayer' ? 'Ex.: Estamos orando por você!' : 'Ex.: Vai tocar daqui a pouco!') ?>" aria-label="Resposta">
+          <button class="btn sm primary">Responder</button>
+        </form>
+        <footer>
+          <?php if ($wa): ?><a class="btn sm" href="<?= h($wa) ?>" target="_blank" rel="noopener">WhatsApp <?= h($r['phone']) ?></a><?php endif; ?>
+          <?= $r['status'] === 'new' ? action_btn('req_read', (string) $r['id'], 'Marcar como lido', 'btn sm', ['back' => $back]) : action_btn('req_unread', (string) $r['id'], 'Marcar como não lido', 'btn sm ghost', ['back' => $back]) ?>
+          <?= action_btn('req_delete', (string) $r['id'], 'Excluir', 'btn sm danger', ['back' => $back], 'Excluir este pedido?') ?>
+        </footer>
+      </article>
+      <?php endforeach; ?>
+    </div>
+
+    <form method="post" class="card form interact">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="interact_save">
+      <input type="hidden" name="back" value="<?= $back ?>">
+      <h3>O que aparece no app</h3>
+      <label class="check"><input type="checkbox" name="req_music" value="1" <?= !empty($s['req_music']) ? 'checked' : '' ?>> Botão "Pedir música"</label>
+      <label class="check"><input type="checkbox" name="req_prayer" value="1" <?= !empty($s['req_prayer']) ? 'checked' : '' ?>> Botão "Pedido de oração"</label>
+      <label class="check"><input type="checkbox" name="chat" value="1" <?= !empty($s['chat']) ? 'checked' : '' ?>> Chat dos ouvintes</label>
+      <label class="check"><input type="checkbox" name="chat_announce" value="1" <?= !empty($s['chat_announce']) ? 'checked' : '' ?>> Avisar no chat quando alguém pede música (pedidos de oração nunca aparecem no chat)</label>
+      <div class="actions"><button class="btn primary">Salvar</button></div>
+    </form>
+
+<?php
+// ======================= CHAT =======================
+elseif ($tab === 'chat'):
+    $bans = rp_read_json(rp_tfile('bans'), []);
+?>
+    <div class="head">
+      <h2>Chat dos ouvintes</h2>
+      <div class="actions">
+        <span class="online" id="chatOnline">0 online</span>
+        <?= action_btn('chat_clear', '', 'Apagar conversa', 'btn sm ghost', [], 'Apagar todas as mensagens do chat?') ?>
+      </div>
+    </div>
+    <?php if (empty($s['chat'])): ?><p class="alert warn">O chat está desligado no app. Ligue em <a href="?tab=pedidos">Pedidos → O que aparece no app</a>.</p><?php endif; ?>
+    <div class="card chatbox">
+      <div class="chat-log" id="chatLog" aria-live="polite"><p class="empty sm">Carregando…</p></div>
+      <form class="chat-send" id="chatSend">
+        <input id="chatNick" maxlength="24" value="Locutor" aria-label="Seu nome no chat">
+        <input id="chatText" maxlength="300" placeholder="Escreva para os ouvintes…" autocomplete="off" aria-label="Mensagem">
+        <button class="btn primary">Enviar</button>
+      </form>
+    </div>
+    <p class="hint">Passe o mouse (ou toque) numa mensagem para apagar ou bloquear o autor. Suas mensagens aparecem em destaque para os ouvintes.</p>
+    <?php if ($bans): ?>
+      <h3 class="section">Bloqueados</h3>
+      <div class="rows">
+        <?php foreach ($bans as $key => $b): ?>
+          <div class="row"><div class="row-main"><strong><?= h($b['nick'] ?? 'Ouvinte') ?></strong><small>bloqueado em <?= date('d/m/Y H:i', (int) ($b['at'] ?? 0)) ?></small></div>
+            <div class="row-actions"><?= action_btn('chat_unban', $key, 'Desbloquear') ?></div></div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
 
 <?php
 // ======================= ESTILOS =======================
@@ -1476,6 +1753,111 @@ else:
     img.src = URL.createObjectURL(f);
   }));
   document.querySelectorAll('input[type=color]').forEach((c) => c.addEventListener('input', () => { c.nextElementSibling.textContent = c.value; }));
+  // ----- Avisos de pedidos novos (som + notificação do navegador) -----
+  (() => {
+    const tenant = <?= json_encode($tenant) ?>;
+    if (!tenant) return;
+    const key = 'rp-last-req:' + tenant;
+    const badge = document.getElementById('reqCount');
+    const baseTitle = document.title;
+    let ctx = null;
+    const beep = () => {
+      try {
+        ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+        [0, 0.18].forEach((delay, i) => {
+          const o = ctx.createOscillator(), g = ctx.createGain();
+          o.frequency.value = i ? 1046 : 784;
+          g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+          g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + delay + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.3);
+          o.connect(g).connect(ctx.destination);
+          o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 0.32);
+        });
+      } catch { /* sem áudio */ }
+    };
+    const btn = document.getElementById('enableNotif');
+    if (btn) btn.addEventListener('click', async () => {
+      beep();
+      if ('Notification' in window) await Notification.requestPermission();
+      btn.textContent = Notification?.permission === 'granted' ? '🔔 Avisos ativados' : '🔔 Som ativado';
+    });
+    let last = Number(localStorage.getItem(key) || 0);
+    const poll = async () => {
+      try {
+        const r = await fetch('?ajax=poll', { cache: 'no-store' });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (badge) { badge.textContent = d.unread; badge.hidden = !d.unread; }
+        document.title = (d.unread ? `(${d.unread}) ` : '') + baseTitle;
+        if (last && d.last > last && d.latest.length) {
+          beep();
+          const n = d.latest[d.latest.length - 1];
+          const title = (n.type === 'prayer' ? 'Pedido de oração' : 'Pedido de música') + ' de ' + n.name;
+          if ('Notification' in window && Notification.permission === 'granted') {
+            const nt = new Notification(title, { body: n.text, tag: 'pedido' });
+            nt.onclick = () => { window.focus(); location.href = '?tab=pedidos&f=new'; };
+          }
+          if (location.search.includes('tab=pedidos')) setTimeout(() => location.reload(), 1200);
+        }
+        last = d.last;
+        localStorage.setItem(key, String(last));
+      } catch { /* offline */ }
+    };
+    poll();
+    setInterval(poll, 12000);
+  })();
+
+  // ----- Chat do painel (moderação) -----
+  (() => {
+    const log = document.getElementById('chatLog');
+    if (!log) return;
+    const csrf = <?= json_encode(csrf()) ?>;
+    let since = 0;
+    const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const hhmm = (t) => new Date(t * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const post = (data) => fetch('./', { method: 'POST', body: new URLSearchParams({ _csrf: csrf, ajax: '1', ...data }) }).then((r) => r.json());
+    const add = (m) => {
+      const el = document.createElement('div');
+      el.className = 'msg ' + m.kind;
+      el.dataset.id = m.id;
+      el.innerHTML = m.kind === 'system'
+        ? `<span class="sys">🎵 <b>${esc(m.nick)}</b> ${esc(m.text)}</span><time>${hhmm(m.at)}</time>`
+        : `<b>${esc(m.nick)}</b><span>${esc(m.text)}</span><time>${hhmm(m.at)}</time>` +
+          (m.kind === 'user' ? '<span class="msg-tools"><button type="button" data-do="chat_delete">Apagar</button><button type="button" data-do="chat_ban">Bloquear</button></span>' : '<span class="msg-tools"><button type="button" data-do="chat_delete">Apagar</button></span>');
+      log.appendChild(el);
+    };
+    const load = async () => {
+      try {
+        const d = await (await fetch('?ajax=chat&since=' + since, { cache: 'no-store' })).json();
+        if (since === 0) log.innerHTML = d.messages.length ? '' : '<p class="empty sm">Nenhuma mensagem ainda.</p>';
+        (d.deleted || []).forEach((id) => log.querySelector(`[data-id="${id}"]`)?.remove());
+        const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+        if (d.messages.length) log.querySelector('.empty')?.remove();
+        d.messages.forEach(add);
+        since = d.last;
+        if (atBottom || d.messages.length) log.scrollTop = log.scrollHeight;
+        document.getElementById('chatOnline').textContent = d.online.length + ' online' + (d.online.length ? ': ' + d.online.slice(0, 8).join(', ') : '');
+      } catch { /* tenta de novo */ }
+    };
+    log.addEventListener('click', async (e) => {
+      const b = e.target.closest('button[data-do]');
+      if (!b) return;
+      const msg = b.closest('.msg');
+      if (b.dataset.do === 'chat_ban' && !confirm('Bloquear este ouvinte? As mensagens dele somem do chat.')) return;
+      const r = await post({ action: b.dataset.do, id: msg.dataset.id });
+      if (r.error) alert(r.error); else { msg.remove(); load(); }
+    });
+    document.getElementById('chatSend').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const t = document.getElementById('chatText');
+      if (!t.value.trim()) return;
+      const r = await post({ action: 'chat_send', text: t.value, nick: document.getElementById('chatNick').value });
+      if (r.error) alert(r.error); else { t.value = ''; load(); }
+    });
+    load();
+    setInterval(load, 3000);
+  })();
+
   // Prévia do canal de TV no painel.
   document.querySelectorAll('.tv-preview').forEach((box) => {
     const { type, src } = box.dataset;

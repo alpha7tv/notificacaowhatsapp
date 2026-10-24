@@ -74,12 +74,12 @@
   }
 
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms = 2600) {
     const el = $('#toast');
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+    toastTimer = setTimeout(() => el.classList.remove('show'), ms);
   }
 
   // ---------- Lista ----------
@@ -424,7 +424,7 @@
     if (!fromHistory && history.state?.player) history.back();
   }
   // Botão "voltar" do Android fecha o player em vez de sair do app.
-  window.addEventListener('popstate', () => { closePlayer(true); closeTv(true); });
+  window.addEventListener('popstate', () => { closePlayer(true); closeTv(true); closeChat(true); });
 
   // Arrastar para baixo fecha o player.
   (() => {
@@ -675,7 +675,10 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, dialog') || state.tvCurrent) { if (e.key === 'Escape' && state.tvCurrent) closeTv(); return; }
+    if (e.target.closest('input, textarea, dialog') || state.tvCurrent || $('#chatScreen').classList.contains('open')) {
+      if (e.key === 'Escape') { closeTv(); closeChat(); }
+      return;
+    }
     if (e.code === 'Space') { e.preventDefault(); toggle(); }
     else if (e.key === 'ArrowRight') step(1);
     else if (e.key === 'ArrowLeft') step(-1);
@@ -836,6 +839,203 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
+  // ---------- Pedidos de música / oração ----------
+
+  // Identificador anônimo deste aparelho (para receber as respostas do locutor).
+  const device = (() => {
+    let d = store.get('device', '');
+    if (!/^[a-f0-9]{24}$/.test(d)) {
+      const a = new Uint8Array(12);
+      crypto.getRandomValues(a);
+      d = [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
+      store.set('device', d);
+    }
+    return d;
+  })();
+  const profile = store.get('profile', { name: '', city: '', phone: '' });
+
+  const INTERACT = {
+    music: { label: 'Pedir música', icon: 'i-music' },
+    prayer: { label: 'Pedido de oração', icon: 'i-pray' },
+    chat: { label: 'Chat', icon: 'i-chat' },
+  };
+
+  function renderInteract(cfg) {
+    const on = Object.keys(INTERACT).filter((k) => cfg.interact && cfg.interact[k]);
+    const html = on.map((k) => `<button type="button" class="pill" data-interact="${k}"><svg><use href="#${INTERACT[k].icon}"/></svg><span>${INTERACT[k].label}</span></button>`).join('');
+    for (const id of ['homeInteract', 'playerInteract']) {
+      $('#' + id).innerHTML = html;
+      $('#' + id).hidden = !on.length;
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-interact]');
+    if (!b) return;
+    if (b.dataset.interact === 'chat') openChat();
+    else openRequest(b.dataset.interact);
+  });
+
+  const api = (action, data, method = 'POST') => {
+    const body = new URLSearchParams({ device, ...data });
+    const opts = method === 'POST' ? { method, body } : { cache: 'no-store' };
+    const url = 'api.php?action=' + action + (method === 'GET' ? '&' + body : '');
+    return fetch(url, opts).then(async (r) => ({ ok: r.ok, ...(await r.json().catch(() => ({ error: 'Sem conexão.' }))) }));
+  };
+
+  let reqType = 'music';
+  function openRequest(type) {
+    reqType = type;
+    const music = type === 'music';
+    $('#reqTitle').textContent = music ? 'Pedir música' : 'Pedido de oração';
+    $('#reqSongWrap').hidden = !music;
+    $('#reqTextLabel').textContent = music ? 'Recado (opcional)' : 'Seu pedido de oração';
+    $('#reqText').placeholder = music ? 'Mande um abraço, um recado…' : 'Escreva pelo que devemos orar';
+    $('#reqName').value = profile.name || '';
+    $('#reqCity').value = profile.city || '';
+    $('#reqPhone').value = profile.phone || '';
+    $('#reqSong').value = '';
+    $('#reqText').value = '';
+    $('#reqMsg').textContent = '';
+    $('#reqDialog').showModal();
+    loadMyRequests();
+  }
+  $('#reqCancel').addEventListener('click', () => $('#reqDialog').close());
+  $('#reqDialog').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+
+  $('#reqForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#reqName').value.trim();
+    const song = $('#reqSong').value.trim();
+    const text = $('#reqText').value.trim();
+    if (!name) { $('#reqMsg').textContent = 'Escreva seu nome.'; return; }
+    if (reqType === 'music' && !song && !text) { $('#reqMsg').textContent = 'Escreva a música que você quer ouvir.'; return; }
+    if (reqType === 'prayer' && !text) { $('#reqMsg').textContent = 'Escreva seu pedido de oração.'; return; }
+    Object.assign(profile, { name, city: $('#reqCity').value.trim(), phone: $('#reqPhone').value.trim() });
+    store.set('profile', profile);
+    $('#reqSubmit').disabled = true;
+    const r = await api('request', { type: reqType, name, song, text, city: profile.city, phone: profile.phone });
+    $('#reqSubmit').disabled = false;
+    if (!r.ok) { $('#reqMsg').textContent = r.error || 'Não foi possível enviar agora.'; return; }
+    $('#reqDialog').close();
+    toast(reqType === 'music' ? 'Pedido enviado! O locutor já recebeu.' : 'Pedido de oração enviado. Estamos com você!');
+    store.set('waitingReply', true);
+  });
+
+  const fmtTime = (t) => new Date(t * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+  async function loadMyRequests() {
+    const r = await api('my_requests', {}, 'GET').catch(() => null);
+    const box = $('#myReqs');
+    if (!r || !r.items || !r.items.length) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<h4>Seus pedidos</h4>' + r.items.slice(0, 5).map((q) => `
+      <div class="my-req">
+        <small>${q.type === 'prayer' ? 'Oração' : 'Música'} · ${fmtTime(q.at)}</small>
+        <p>${escapeHtml(q.song || q.text)}</p>
+        ${q.reply ? `<p class="answer"><b>Resposta:</b> ${escapeHtml(q.reply)}</p>` : '<p class="waiting">Aguardando resposta</p>'}
+      </div>`).join('');
+  }
+
+  // Avisa quando o locutor responder (enquanto o app está aberto).
+  async function checkReplies() {
+    if (document.hidden || !state.config || !store.get('waitingReply', false)) return;
+    const r = await api('my_requests', {}, 'GET').catch(() => null);
+    if (!r || !r.items) return;
+    const seen = store.get('seenReply', 0);
+    const fresh = r.items.filter((q) => q.reply && q.reply_at > seen);
+    if (fresh.length) {
+      store.set('seenReply', Math.max(...fresh.map((q) => q.reply_at)));
+      toast('O locutor respondeu: ' + fresh[0].reply, 7000);
+    }
+    if (!r.items.some((q) => !q.reply)) store.set('waitingReply', false);
+  }
+  setInterval(checkReplies, 20000);
+
+  // ---------- Chat dos ouvintes ----------
+
+  const chat = { since: 0, timer: null, nick: store.get('nick', '') };
+
+  function openChat() {
+    const scr = $('#chatScreen');
+    scr.classList.add('open');
+    scr.setAttribute('aria-hidden', 'false');
+    if (history.state?.chat !== true) history.pushState({ chat: true }, '');
+    $('#chatTitle').textContent = 'Chat · ' + (state.title || '');
+    showChatForm();
+    chat.since = 0;
+    $('#chatLog').innerHTML = '<p class="chat-empty">Carregando conversa…</p>';
+    loadChat();
+    clearInterval(chat.timer);
+    chat.timer = setInterval(loadChat, 3000);
+  }
+
+  function closeChat(fromHistory = false) {
+    const scr = $('#chatScreen');
+    if (!scr.classList.contains('open')) return;
+    clearInterval(chat.timer);
+    scr.classList.remove('open');
+    scr.setAttribute('aria-hidden', 'true');
+    if (!fromHistory && history.state?.chat) history.back();
+  }
+
+  function showChatForm() {
+    $('#chatJoin').hidden = !!chat.nick;
+    $('#chatForm').hidden = !chat.nick;
+    if (chat.nick) setTimeout(() => $('#chatInput').focus({ preventScroll: true }), 300);
+  }
+
+  function chatMsgHtml(m) {
+    const t = new Date(m.at * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    if (m.kind === 'system') return `<div class="cmsg system" data-id="${m.id}"><svg><use href="#i-music"/></svg><span><b>${escapeHtml(m.nick)}</b> ${escapeHtml(m.text)}</span></div>`;
+    return `<div class="cmsg ${m.kind}${m.mine ? ' mine' : ''}" data-id="${m.id}">
+      ${m.mine ? '' : `<b>${escapeHtml(m.nick)}${m.kind === 'host' ? ' <span class="host-tag">Locutor</span>' : ''}</b>`}
+      <p>${escapeHtml(m.text)}</p><time>${t}</time></div>`;
+  }
+
+  async function loadChat() {
+    if (document.hidden) return;
+    const r = await api('chat', { since: chat.since, nick: chat.nick }, 'GET').catch(() => null);
+    const log = $('#chatLog');
+    if (!r || !r.ok) {
+      if (r && r.error && chat.since === 0) log.innerHTML = `<p class="chat-empty">${escapeHtml(r.error)}</p>`;
+      return;
+    }
+    (r.deleted || []).forEach((id) => log.querySelector(`[data-id="${id}"]`)?.remove());
+    if (chat.since === 0) log.innerHTML = r.messages.length ? '' : '<p class="chat-empty">Seja o primeiro a dizer olá! 👋</p>';
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    if (r.messages.length) {
+      log.querySelector('.chat-empty')?.remove();
+      log.insertAdjacentHTML('beforeend', r.messages.map(chatMsgHtml).join(''));
+      if (atBottom || chat.since === 0) log.scrollTop = log.scrollHeight;
+    }
+    chat.since = r.last;
+    $('#chatOnline').textContent = `${r.online.length} online`;
+    $('#onlineList').innerHTML = r.online.slice(0, 30).map((n) => `<span class="who${n === chat.nick ? ' me' : ''}">${escapeHtml(n)}</span>`).join('');
+    if (r.banned) { $('#chatForm').hidden = true; $('#chatJoin').hidden = true; }
+  }
+
+  $('#chatJoin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const n = $('#chatNick').value.trim();
+    if (!n) return;
+    chat.nick = n;
+    store.set('nick', n);
+    showChatForm();
+    loadChat();
+  });
+  $('#chatForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = $('#chatInput');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    const r = await api('chat_send', { nick: chat.nick, text });
+    if (!r.ok) { toast(r.error || 'Mensagem não enviada.'); input.value = text; return; }
+    loadChat();
+  });
+  $('#closeChat').addEventListener('click', () => closeChat());
+
   // ---------- Temas visuais ----------
 
   const SKIN_FONTS = {
@@ -911,6 +1111,7 @@
     renderGenres();
     renderList();
     renderAbout(cfg);
+    renderInteract(cfg);
     renderSlot($('#adTop'), cfg.ads && cfg.ads.top);
     renderSlot($('#adPlayer'), cfg.ads && cfg.ads.player);
     renderSlot($('#adTv'), cfg.ads && cfg.ads.player);
