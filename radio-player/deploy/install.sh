@@ -208,13 +208,18 @@ fi
 # ---------------------------------------------------------------------------
 say "Conferindo…"
 HOST_HDR="${DOMAIN:-localhost}"
-API_CODE="$(curl -sS -H "Host: ${HOST_HDR}" -o /dev/null -w '%{http_code}' http://127.0.0.1/api.php || true)"
+# Com HTTPS ativo, a porta 80 só redireciona: confere pela 443 no próprio servidor.
+if [[ "$URL" == https://* ]]; then
+  API_CODE="$(curl -ksS --resolve "${DOMAIN}:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://${DOMAIN}/api.php" || true)"
+else
+  API_CODE="$(curl -sS -H "Host: ${HOST_HDR}" -o /dev/null -w '%{http_code}' http://127.0.0.1/api.php || true)"
+fi
 if [[ "$API_CODE" == "200" || "$API_CODE" == "404" ]]; then
   echo "API respondendo."
 else
   warn "A API não respondeu localmente. Veja: journalctl -u ${FPM_SERVICE} -n 50"
 fi
-if curl -fsS -H "Host: ${HOST_HDR}" -o /dev/null -w '%{http_code}' http://127.0.0.1/data/platform.json 2>/dev/null | grep -q 200; then
+if curl -ksS -L -H "Host: ${HOST_HDR}" --resolve "${HOST_HDR}:443:127.0.0.1" -o /dev/null -w '%{http_code}' "http://127.0.0.1/data/platform.json" 2>/dev/null | grep -q 200; then
   warn "data/ está acessível pela web — verifique a configuração do Nginx!"
 fi
 
