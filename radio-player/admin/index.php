@@ -122,6 +122,30 @@ function app_url(string $slug): string
 
 const CLIENT_STATES = ['active' => 'Ativo', 'suspended' => 'Suspenso', 'expired' => 'Vencido'];
 
+/** Dias até o vencimento (negativo = vencido há N dias); null se não vence. */
+function days_left(array $c): ?int
+{
+    if (empty($c['expires'])) {
+        return null;
+    }
+    return (int) round((strtotime($c['expires']) - strtotime(date('Y-m-d'))) / 86400);
+}
+
+function due_label(array $c): string
+{
+    $d = days_left($c);
+    if ($d === null) {
+        return 'sem vencimento';
+    }
+    $date = date('d/m/Y', strtotime($c['expires']));
+    return match (true) {
+        $d < 0 => "venceu em {$date} (há " . -$d . ' dia' . ($d === -1 ? '' : 's') . ')',
+        $d === 0 => "vence hoje ({$date})",
+        $d === 1 => "vence amanhã ({$date})",
+        default => "vence em {$d} dias ({$date})",
+    };
+}
+
 // ---------- Estado ----------
 
 $admin = rp_read_php(RP_ADMIN);
@@ -222,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
             go();
         }
 
-        $masterActions = ['client_save', 'client_delete', 'client_enter', 'client_leave', 'platform_save'];
+        $masterActions = ['client_save', 'client_delete', 'client_enter', 'client_leave', 'client_renew', 'platform_save'];
         if (in_array($action, $masterActions, true) && !$master) {
             throw new RuntimeException('Ação permitida só para o administrador da plataforma.');
         }
@@ -329,6 +353,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                     unset($_SESSION['as']);
                 }
                 flash('Cliente excluído, com o app, as imagens e as estatísticas.');
+                go('tab=clientes');
+
+            case 'client_renew':
+                $slug = (string) ($_POST['id'] ?? '');
+                $months = (int) ($_POST['months'] ?? 1) === 12 ? 12 : 1;
+                $newDate = rp_locked(function () use ($slug, $months) {
+                    $all = rp_clients();
+                    if (!isset($all[$slug])) {
+                        throw new RuntimeException('Cliente não encontrado.');
+                    }
+                    // Renova a partir do vencimento atual; se já venceu (ou não tinha), a partir de hoje.
+                    $today = date('Y-m-d');
+                    $base = ($all[$slug]['expires'] ?? '') > $today ? $all[$slug]['expires'] : $today;
+                    $all[$slug]['expires'] = date('Y-m-d', strtotime("{$base} +{$months} month"));
+                    rp_save_clients($all);
+                    return $all[$slug]['expires'];
+                });
+                flash($clients[$slug]['name'] . ' renovado até ' . date('d/m/Y', strtotime($newDate)) . '.');
                 go('tab=clientes');
 
             case 'client_enter':
@@ -773,6 +815,12 @@ function action_btn(string $action, string $id, string $label, string $class = '
         <?= action_btn('client_leave', '', '← Voltar para clientes', 'btn sm') ?>
       </div>
     <?php endif; ?>
+    <?php if ($tenant !== null && $clientState === 'active' && ($dl = days_left($client)) !== null && $dl <= 7): ?>
+      <p class="alert warn">
+        Seu plano <?= h(due_label($client)) ?>. Renove para o app continuar no ar.
+        <?php if ($role === 'client' && $support): ?><a href="<?= h($support) ?>" target="_blank" rel="noopener">Falar com o suporte</a><?php endif; ?>
+      </p>
+    <?php endif; ?>
     <?php if ($tenant !== null && $clientState !== 'active'): ?>
       <p class="alert err">
         <?= $clientState === 'expired' ? 'A assinatura deste app venceu' : 'Este app está suspenso' ?>: os ouvintes veem a mensagem "temporariamente indisponível".
@@ -791,7 +839,7 @@ if ($tab === 'inicio'):
     $clicks = array_sum(array_column($stats, 'clicks'));
     $appUrl = app_url($tenant);
 ?>
-    <h2>Visão geral</h2>
+    <div class="head"><h2>Visão geral</h2><span class="plan">Plano: <b><?= h(due_label($client)) ?></b><?= $client['max_stations'] ? ' · até ' . (int) $client['max_stations'] . ' rádio(s)' : '' ?></span></div>
     <div class="stats">
       <a class="stat" href="?tab=radios"><strong><?= count($activeSt) ?></strong><span>rádios no ar<?= count($cfg['stations']) > count($activeSt) ? ' (de ' . count($cfg['stations']) . ')' : '' ?></span></a>
       <a class="stat" href="?tab=estilos"><strong><?= count($cfg['genres']) ?></strong><span>estilos</span></a>
@@ -1072,7 +1120,7 @@ elseif ($tab === 'clientes'):
     if ($edit !== ''):
         $c = $clients[$edit] ?? null;
         $isNew = $c === null;
-        $c ??= ['name' => '', 'user' => '', 'status' => 'active', 'expires' => '', 'max_stations' => 0, 'phone' => '', 'notes' => ''];
+        $c ??= ['name' => '', 'user' => '', 'status' => 'active', 'expires' => date('Y-m-d', strtotime('+1 month')), 'max_stations' => 0, 'phone' => '', 'notes' => ''];
         $suggestPass = substr(str_replace(['+', '/', '='], '', base64_encode(random_bytes(9))), 0, 10);
 ?>
     <div class="head"><h2><?= $isNew ? 'Novo cliente' : 'Editar cliente' ?></h2><a class="btn sm ghost" href="?tab=clientes">← Voltar</a></div>
@@ -1109,7 +1157,11 @@ elseif ($tab === 'clientes'):
             <option value="suspended" <?= $c['status'] === 'suspended' ? 'selected' : '' ?>>Suspenso (app fora do ar)</option>
           </select>
         </label>
-        <label>Vencimento<input type="date" name="expires" value="<?= h($c['expires']) ?>"><small>Depois desta data o app sai do ar sozinho. Em branco: sem vencimento.</small></label>
+        <label>Vencimento<input type="date" name="expires" id="cExpires" value="<?= h($c['expires']) ?>">
+          <small>No dia seguinte a esta data o app sai do ar sozinho. Em branco: sem vencimento.
+            <a href="#" onclick="const e=document.getElementById('cExpires');const d=new Date();d.setMonth(d.getMonth()+1);e.value=d.toISOString().slice(0,10);return false">+1 mês</a> ·
+            <a href="#" onclick="const e=document.getElementById('cExpires');const d=new Date();d.setFullYear(d.getFullYear()+1);e.value=d.toISOString().slice(0,10);return false">+1 ano</a> ·
+            <a href="#" onclick="document.getElementById('cExpires').value='';return false">sem vencimento</a></small></label>
         <label>Limite de rádios<input type="number" name="max_stations" min="0" max="999" value="<?= (int) $c['max_stations'] ?>"><small>0 = sem limite.</small></label>
       </div>
       <label>Observações (só você vê)<textarea name="notes" rows="2" maxlength="500"><?= h($c['notes']) ?></textarea></label>
@@ -1163,13 +1215,22 @@ elseif ($tab === 'clientes'):
       <div class="stat"><strong><?= (int) ($counts['expired'] ?? 0) ?></strong><span>vencidos</span></div>
       <div class="stat"><strong><?= (int) ($counts['suspended'] ?? 0) ?></strong><span>suspensos</span></div>
     </div>
+    <?php
+        // Vencidos e suspensos primeiro, depois quem vence mais cedo; sem vencimento por último.
+        uksort($clients, function ($a, $b) use ($clients) {
+            $rank = fn ($c) => rp_client_state($c) === 'active' ? 1 : 0;
+            $due = fn ($c) => $c['expires'] ?: '9999-12-31';
+            return [$rank($clients[$a]), $due($clients[$a]), $clients[$a]['name']] <=> [$rank($clients[$b]), $due($clients[$b]), $clients[$b]['name']];
+        });
+    ?>
     <div class="rows">
       <?php foreach ($clients as $slug => $c):
           $state = rp_client_state($c);
           $cc = rp_read_json(RP_TENANTS . '/' . $slug . '/config.json', []);
           $nSt = count($cc['stations'] ?? []);
           $logo = $cc['settings']['logo'] ?? '';
-          $soon = $state === 'active' && $c['expires'] && $c['expires'] <= date('Y-m-d', strtotime('+7 days'));
+          $dl = days_left($c);
+          $soon = $state === 'active' && $dl !== null && $dl <= 7;
       ?>
       <div class="row<?= $state !== 'active' ? ' off' : '' ?>">
         <span class="thumb"><?php if ($logo): ?><img src="<?= h(img_url($logo)) ?>" alt=""><?php else: ?><?= h(mb_strtoupper(mb_substr($c['name'], 0, 2))) ?><?php endif; ?></span>
@@ -1178,8 +1239,10 @@ elseif ($tab === 'clientes'):
           <small><a href="<?= h(app_url($slug)) ?>" target="_blank" rel="noopener" class="mono">/r/<?= h($slug) ?>/</a> · <?= $c['user'] !== '' ? 'login: ' . h($c['user']) : 'sem login de cliente' ?> · <?= $nSt ?> rádio(s)<?= $c['max_stations'] ? ' de ' . (int) $c['max_stations'] : '' ?></small>
         </div>
         <span class="badge <?= $state === 'active' ? 'on' : 'bad' ?>"><?= CLIENT_STATES[$state] ?></span>
-        <small class="due<?= $soon ? ' soon' : '' ?>"><?= $c['expires'] ? 'vence ' . date('d/m/Y', strtotime($c['expires'])) : 'sem vencimento' ?></small>
+        <small class="due<?= $soon ? ' soon' : '' ?><?= $state === 'expired' ? ' late' : '' ?>"><?= h(due_label($c)) ?></small>
         <div class="row-actions">
+          <?= action_btn('client_renew', $slug, 'Renovar +1 mês', 'btn sm', ['months' => 1], 'Renovar ' . $c['name'] . ' por 1 mês?') ?>
+          <?= action_btn('client_renew', $slug, '+1 ano', 'btn sm', ['months' => 12], 'Renovar ' . $c['name'] . ' por 1 ano?') ?>
           <?= action_btn('client_enter', $slug, 'Entrar no painel', 'btn sm primary') ?>
           <a class="btn sm" href="?tab=clientes&edit=<?= h($slug) ?>">Editar</a>
         </div>
