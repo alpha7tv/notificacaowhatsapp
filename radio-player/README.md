@@ -47,7 +47,20 @@ O tempo de troca dos banners e o atraso do popup são definidos em *Aparência*.
 - O botão **Instalar app** usa o instalador do navegador; no iPhone e onde ele não existe, mostra o passo a passo
 - Mudanças feitas no painel aparecem no app ao abrir (ou ao voltar para ele depois de 5 min)
 
-## Instalação no servidor
+## Instalação automática na VPS (recomendado)
+
+Numa VPS **Ubuntu 22.04+ ou Debian 12+**, com o domínio já apontado (registro DNS tipo A) para o IP dela, rode:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alpha7tv/notificacaowhatsapp/refs/heads/claude/adoring-ramanujan-nqorro/radio-player/deploy/install.sh \
+  | sudo bash -s -- --domain radio.seudominio.com.br --email voce@email.com
+```
+
+O script instala Nginx + PHP, baixa o app, configura o site com HTTPS (Let's Encrypt) e mostra os
+endereços no final. Sem `--domain`, o app fica no IP da VPS (sem HTTPS). **Rodar de novo atualiza o app**
+sem apagar rádios, anúncios e imagens.
+
+## Instalação manual
 
 1. Copie a pasta `radio-player/` para o servidor (pode ser a raiz de um domínio, ex.: `radio.seudominio.com.br`).
 2. Dê permissão de escrita ao PHP nas pastas de dados:
