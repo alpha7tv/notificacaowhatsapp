@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" overflow="hidden" viewBox="0 0 1200 300">
+<clipPath id="clip"><rect width="1200" height="300"/></clipPath><g clip-path="url(#clip)">
+<rect width="1200" height="300" fill="#ffd60a"/>
+<rect x="760" y="0" width="440" height="300" fill="#1b1b1f"/>
+<g fill="#ffd60a"><rect x="900" y="14" width="40" height="34" rx="4"/><rect x="900" y="76" width="40" height="34" rx="4"/><rect x="900" y="138" width="40" height="34" rx="4"/><rect x="900" y="200" width="40" height="34" rx="4"/><rect x="900" y="262" width="40" height="34" rx="4"/></g>
+<text x="60" y="104" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="800" fill="#1b1b1f" letter-spacing="3">MATRÍCULAS ABERTAS</text>
+<text x="58" y="182" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="900" fill="#1b1b1f">Auto Escola</text>
+<text x="58" y="258" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="900" fill="#1b1b1f">Via Certa</text>
+<text x="1075" y="140" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="800" fill="#fff">1ª habilitação</text>
+<text x="1075" y="200" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="900" fill="#ffd60a">em 10x</text>
+<text x="830" y="140" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="64" font-weight="900" fill="#fff">A</text>
+<text x="830" y="210" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="64" font-weight="900" fill="#fff">B</text>
+</g></svg>

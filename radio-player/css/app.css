@@ -435,10 +435,10 @@ body.is-live .art-ring { animation-play-state: running; }
 .ad-text div { flex: 1; min-width: 0; }
 .ad-text strong { display: block; }
 .ad-text span { color: var(--muted); font-size: .88rem; }
-.ad-text .ad-cta { color: var(--accent); font-weight: 800; font-size: .88rem; white-space: nowrap; }
+.ad-text .ad-cta { color: var(--accent); font-weight: 800; font-size: .88rem; white-space: nowrap; margin-bottom: 10px; }
 .ad-label {
-  position: absolute; top: 6px; right: 8px; font-size: .62rem; letter-spacing: .05em; text-transform: uppercase;
-  background: rgba(0, 0, 0, .55); color: #fff; padding: 2px 6px; border-radius: 6px; pointer-events: none;
+  position: absolute; bottom: 5px; right: 6px; font-size: .56rem; letter-spacing: .05em; text-transform: uppercase;
+  background: rgba(0, 0, 0, .5); color: #fff; padding: 1px 5px; border-radius: 5px; pointer-events: none;
 }
 .ad-slot .fade { animation: fade .5s ease; }
 @keyframes fade { from { opacity: 0; } }
@@ -447,7 +447,7 @@ body.is-live .art-ring { animation-play-state: running; }
 .ad-popup #adPopupBody > a, .ad-popup #adPopupBody > div { display: block; border-radius: 22px; overflow: hidden; background: var(--surface-2); text-decoration: none; color: var(--text); box-shadow: var(--shadow); }
 .ad-popup img { display: block; width: 100%; height: auto; max-height: 75vh; object-fit: contain; }
 .ad-popup .ad-text { padding: 22px; flex-direction: column; align-items: flex-start; }
-.ad-popup .ad-label { top: 10px; left: 10px; right: auto; }
+.ad-popup .ad-label { top: 10px; left: 10px; right: auto; bottom: auto; font-size: .62rem; }
 .popup-close {
   position: absolute; top: -14px; right: -10px; z-index: 1; width: 40px; height: 40px; border-radius: 50%;
   border: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow);

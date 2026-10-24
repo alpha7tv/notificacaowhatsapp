@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" overflow="hidden" viewBox="0 0 1200 300">
+<clipPath id="clip"><rect width="1200" height="300"/></clipPath><g clip-path="url(#clip)">
+<rect width="1200" height="300" fill="#173d22"/>
+<path d="M0 230 Q300 170 600 220 T1200 200 V300 H0Z" fill="#2a6b33"/><path d="M0 260 Q400 220 800 262 T1200 250 V300 H0Z" fill="#3d8a40"/>
+<circle cx="1080" cy="70" r="46" fill="#ffcf4a"/>
+<text x="60" y="110" font-family="Georgia, 'Times New Roman', serif" font-size="68" font-weight="700" fill="#fff">Agropecuária Boi Gordo</text>
+<text x="62" y="168" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#d9f99d">Ração · sal mineral · vacinas · ferramentas</text>
+<rect x="62" y="194" width="400" height="60" rx="30" fill="#ffcf4a"/>
+<text x="262" y="234" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="800" fill="#173d22">ENTREGAMOS NA ROÇA</text>
+</g></svg>

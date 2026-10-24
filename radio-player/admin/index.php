@@ -384,6 +384,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$fatal) {
                 });
                 go('tab=publicidade');
 
+            case 'ads_samples':
+                rp_update_config(function ($cfg) {
+                    if (array_filter($cfg['ads'], fn ($a) => !empty($a['sample']))) {
+                        throw new RuntimeException('Os anúncios de exemplo já estão cadastrados.');
+                    }
+                    $samples = [
+                        ['top', 'Supermercado Bom Preço', '', 'samples/topo-supermercado.svg'],
+                        ['top', 'Agropecuária Boi Gordo', '', 'samples/topo-agropecuaria.svg'],
+                        ['top', 'Ótica Visão Clara', '', 'samples/topo-otica.svg'],
+                        ['top', 'Auto Escola Via Certa', '', 'samples/topo-autoescola.svg'],
+                        ['player', 'Pizzaria Forno a Lenha', '', 'samples/player-pizzaria.svg'],
+                        ['player', 'Construmax Materiais', '', 'samples/player-construmax.svg'],
+                        ['player', 'Auto Peças Silva', 'Peças com o melhor preço. Chame no WhatsApp!', ''],
+                        ['popup', 'Farmácia Vida', '', 'samples/popup-farmacia.svg'],
+                        ['popup', 'Festa do Peão de Vila Esperança', '', 'samples/popup-show.svg'],
+                    ];
+                    foreach ($samples as [$pos, $title, $text, $image]) {
+                        $cfg['ads'][] = [
+                            'id' => rp_id(), 'title' => $title, 'text' => $text, 'image' => $image, 'link' => '',
+                            'position' => $pos, 'starts' => '', 'ends' => '', 'active' => true,
+                            'created_at' => date('Y-m-d'), 'sample' => true,
+                        ];
+                    }
+                    return $cfg;
+                });
+                flash('Anúncios de exemplo adicionados. Abra o app para ver.');
+                go('tab=publicidade');
+
+            case 'ads_samples_remove':
+                rp_update_config(function ($cfg) {
+                    $cfg['ads'] = array_values(array_filter($cfg['ads'], fn ($a) => empty($a['sample'])));
+                    return $cfg;
+                });
+                flash('Anúncios de exemplo removidos.');
+                go('tab=publicidade');
+
             case 'ad_reset':
                 rp_locked(function () {
                     $stats = rp_read_json(RP_STATS, []);
@@ -710,6 +746,18 @@ elseif ($tab === 'publicidade'):
     </form>
 <?php else: ?>
     <div class="head"><h2>Publicidade</h2><a class="btn primary" href="?tab=publicidade&edit=new">+ Nova publicidade</a></div>
+    <?php $hasSamples = (bool) array_filter($cfg['ads'], fn ($a) => !empty($a['sample'])); ?>
+    <div class="card samples">
+      <div>
+        <strong>Anúncios de exemplo</strong>
+        <p class="hint"><?= $hasSamples
+            ? 'Os anúncios marcados como "Exemplo" são fictícios. Remova quando cadastrar os anunciantes de verdade.'
+            : 'Preenche os 3 espaços com anunciantes fictícios para você ver como fica no app.' ?></p>
+      </div>
+      <?= $hasSamples
+          ? action_btn('ads_samples_remove', '', 'Remover exemplos', 'btn danger', [], 'Remover todos os anúncios de exemplo?')
+          : action_btn('ads_samples', '', 'Adicionar anúncios de exemplo', 'btn') ?>
+    </div>
     <?php foreach (AD_POSITIONS as $pos => $label):
         $list = array_filter($cfg['ads'], fn ($a) => ($a['position'] ?? '') === $pos); ?>
       <h3 class="section"><?= h($label) ?> <a class="btn sm" href="?tab=publicidade&edit=new&pos=<?= $pos ?>">+ Adicionar</a></h3>
@@ -724,7 +772,7 @@ elseif ($tab === 'publicidade'):
         <div class="row<?= $live ? '' : ' off' ?>">
           <span class="thumb wide"><?php if ($ad['image']): ?><img src="<?= h(img_url($ad['image'])) ?>" alt=""><?php else: ?>Texto<?php endif; ?></span>
           <div class="row-main">
-            <strong><?= h($ad['title'] ?: 'Sem título') ?></strong>
+            <strong><?= h($ad['title'] ?: 'Sem título') ?><?php if (!empty($ad['sample'])): ?> <span class="badge">Exemplo</span><?php endif; ?></strong>
             <small><?= $ad['starts'] || $ad['ends'] ? h(($ad['starts'] ? date('d/m/Y', strtotime($ad['starts'])) : '…') . ' até ' . ($ad['ends'] ? date('d/m/Y', strtotime($ad['ends'])) : 'sem fim')) . ' · ' : '' ?>
               <?= number_format($v, 0, ',', '.') ?> exibições · <?= number_format($c, 0, ',', '.') ?> cliques<?= $v ? ' · ' . number_format($c / $v * 100, 1, ',', '.') . '%' : '' ?></small>
           </div>
