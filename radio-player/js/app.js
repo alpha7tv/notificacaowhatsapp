@@ -213,7 +213,7 @@
     clearTimeout(state.retryTimer);
     setStatus('loading');
     // Rádio ao vivo: sempre recarrega o stream para não tocar áudio "atrasado" do buffer.
-    audio.src = st.stream + (st.stream.includes('?') ? '&' : '?') + '_=' + Date.now();
+    audio.src = /^(blob|data):/.test(st.stream) ? st.stream : st.stream + (st.stream.includes('?') ? '&' : '?') + '_=' + Date.now();
     const p = audio.play();
     if (p) p.catch((err) => {
       if (err.name === 'NotAllowedError') { setStatus('paused'); toast('Toque em ▶ para ouvir'); }
